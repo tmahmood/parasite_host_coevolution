@@ -38,6 +38,7 @@ impl Simulation {
     pub fn hosts(&self) -> &Vec<Host> {
         &self.hosts
     }
+
     pub fn parasites(&self) -> &Vec<Vec<Parasite>> {
         &self.parasites
     }

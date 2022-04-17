@@ -26,7 +26,7 @@ impl From<usize> for HostTypes {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Host {
     host_type: HostTypes,
     number_set: Vec<i32>,

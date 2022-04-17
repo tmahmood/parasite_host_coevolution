@@ -49,11 +49,10 @@ async fn main_async() {
     ).unwrap();
     let mut simulation = new_simulation(s).await;
     println!("{}", simulation);
-    expose_host(&mut simulation).await;
+    expose_hosts(&mut simulation).await;
 }
 
 pub fn find_match_score(host: &Host, parasite: &Parasite, index: usize, pref: &SimulationPref) -> bool {
-    println!("Checking match score");
     let number_set = host.number_set();
     let parasite_numer_set = parasite.number_set();
     let mut match_count = 0;
@@ -63,17 +62,22 @@ pub fn find_match_score(host: &Host, parasite: &Parasite, index: usize, pref: &S
     match_count < 
 }
 
-pub async fn expose_host(simulation: &mut Simulation) {
-    let mut count_dead_hosts = 0;
-    let mut how_many_parasites_matched = 0;
-    for host in simulation.hosts() {
+pub async fn expose_hosts(simulation: &mut Simulation) {
+    let mut killed_list = vec![];
+    let hosts = simulation.hosts();
+    // If a host individual has a match score with at least X parasite individuals that is lower than N,
+    // then that host individual is considered killed.
+    for (i, host) in hosts.iter().enumerate() {
+        let mut how_many_parasites_matched = 0;
         let parasites = parasites::chose_parasites(simulation).await;
-        println!("{:?}", parasites);
         for (index, parasite) in parasites {
             find_match_score(host, &parasite, index as usize, simulation.pref());
         }
+        if how_many_parasites_matched >= simulation.pref().x() {
+            killed_list.push(how_many_parasites_matched)
+        }
     }
-    println!("{} of {} hosts got killed", count_dead_hosts, simulation.hosts().len());
+    println!("{} of {} hosts got killed", killed_list.len(), simulation.hosts().len());
 }
 
 fn main() {
