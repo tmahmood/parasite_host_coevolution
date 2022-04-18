@@ -59,7 +59,7 @@ pub fn find_match_score(host: &Host, parasite: &Parasite, index: usize, pref: &S
     for ii in index..pref.g() as usize {
         if number_set[ii] == parasite_numer_set[ii - index] { match_count += 1 }
     }
-    match_count < 
+    match_count < pref.n()
 }
 
 pub async fn expose_hosts(simulation: &mut Simulation) {
@@ -71,7 +71,9 @@ pub async fn expose_hosts(simulation: &mut Simulation) {
         let mut how_many_parasites_matched = 0;
         let parasites = parasites::chose_parasites(simulation).await;
         for (index, parasite) in parasites {
-            find_match_score(host, &parasite, index as usize, simulation.pref());
+            if find_match_score(host, &parasite, index as usize, simulation.pref()) {
+                how_many_parasites_matched += 1;
+            }
         }
         if how_many_parasites_matched >= simulation.pref().x() {
             killed_list.push(how_many_parasites_matched)
