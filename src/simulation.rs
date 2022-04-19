@@ -52,6 +52,14 @@ impl Simulation {
         &self.hosts
     }
 
+    pub fn kill_host(&mut self, index: usize) {
+        self.hosts[index].set_alive(false);
+    }
+
+    pub fn hosts_mut(&mut self) -> &mut Array<Host, Ix1> {
+        &mut self.hosts
+    }
+
     pub fn parasites(&self) -> &Array<usize, Ix3> {
         &self.parasites
     }
@@ -74,12 +82,9 @@ impl Display for Simulation {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut s = String::new();
         let hosts = self.hosts();
-        for host in hosts.iter() {
-            s.push_str(&host.to_string());
-            s.push_str("\n");
-        }
+        s.push_str(&hosts.to_string());
         s.push_str("\n");
-        s.push_str(&format!("{:#?}", self.parasites()));
+        s.push_str(&format!("{}", self.parasites()));
         write!(f, "{}", s)
     }
 }

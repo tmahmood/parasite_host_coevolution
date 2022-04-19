@@ -81,16 +81,17 @@ and wild. They should be winning at roughly the same rates. Also P goes against 
 reproduction but that's a minor difference.
  **/
 pub async fn expose_hosts(simulation: &mut Simulation) {
-    let mut killed_hosts_list = vec![];
+    // let mut killed_hosts_list = vec![];
     let mut unmatched_parasites = vec![];
     let mut faced_parasites = HashMap::new();
     let mut no_of_reservation_host_died = 0;
     let mut no_of_wild_host_died = 0;
     // If a host individual has a match score with at least X parasite individuals that is lower than N,
     // then that host individual is considered killed.
-    let hosts = simulation.hosts();
+    let hosts = simulation.hosts().clone();
     for i in 0..simulation.pref().a() + simulation.pref().b() {
         let host = &hosts[i];
+        println!("            {}", host.number_set());
         let mut match_score_bellow_threshold = 0;
         let selected_parasites = parasites::chose_parasites(simulation).await;
         let all_parasites = simulation.parasites();
@@ -104,21 +105,23 @@ pub async fn expose_hosts(simulation: &mut Simulation) {
                 unmatched_parasites.push(ParasiteSpeciesIndex { match_count, ..parasite_k });
             }
         }
+        println!("----------------------");
         if match_score_bellow_threshold >= simulation.pref().x() {
             match host.host_type() {
                 HostTypes::Reservation => no_of_reservation_host_died += 1,
                 HostTypes::Wild => no_of_wild_host_died += 1
             }
-            killed_hosts_list.push(i)
+            simulation.kill_host(i);
         } else {
             faced_parasites.insert(i, selected_parasites);
         }
     }
     // clear the killed hosts
     // simulation.remove_hosts(&killed_hosts_list);
+    let total_host_died = no_of_reservation_host_died + no_of_wild_host_died;
     // secondary exposer
     let secondary_allowed = ((simulation.pref().a() + simulation.pref().b()) as f32 * simulation.pref().m());
-    if simulation.current_generation() > simulation.pref().l() && killed_hosts_list.len() < secondary_allowed as usize {
+    if simulation.current_generation() > simulation.pref().l() && total_host_died < secondary_allowed as usize {
         println!("Secondary exposer used");
     }
 
@@ -135,7 +138,7 @@ pub async fn expose_hosts(simulation: &mut Simulation) {
         simulation.pref().o(),
         simulation.pref().p(),
     );
-    println!("{} hosts got killed, {} left {}", killed_hosts_list.len(), simulation.hosts().len(), chance);
+    println!("{} hosts got killed, {} left {}", total_host_died, simulation.hosts().len(), chance);
 }
 
 pub fn get_chance(host_type: HostTypes, v: f32, u: f32, w: f32, y: f32, t: f32, o: f32, p: f32) -> f32 {
@@ -149,17 +152,27 @@ pub fn get_chance(host_type: HostTypes, v: f32, u: f32, w: f32, y: f32, t: f32, 
 async fn main_async() {
     // TODO Need better way to feed the input file
     let s: SimulationPref = serde_ini::from_str(&fs::read_to_string("params.conf").unwrap()).unwrap();
-    let mut simulation = new_simulation(s).await;
+    let mut simulation = new_simulation(s.clone()).await;
+    expose_hosts(&mut simulation).await;
     println!("{}", simulation);
 }
 
 pub fn find_match_score(host: &Host, parasite: &ArrayView<usize, Ix1>, index: usize, pref: &SimulationPref) -> (bool, usize) {
     let mut match_count = 0;
-    // for ii in index..pref.g() {
-    //     if host.number_set()[ii] == parasite[ii - index] {
-    //         match_count += 1
-    //     }
-    // }
+    let number_set = host.number_set();
+    let mut p = String::new();
+    print!(" ");
+    for ii in index..index + pref.g() {
+        p.push_str(&format!("{}, ", parasite[ii - index]));
+        if number_set[ii] == parasite[ii - index] {
+            match_count += 1
+        }
+    }
+    print!("{} | {}->{} || ", match_count, index, index + pref.g());
+    for _ in 0..index {
+        print!("   ");
+    }
+    println!("{}", p.trim());
     (match_count < pref.n(), match_count)
 }
 
