@@ -50,7 +50,7 @@ pub struct SimulationPref {
     /** percentage of reservation hosts exposed to additional parasites */
     aa: f32,
     /** all parasite individuals with a total match score that is higher than BB% of all parasite individuals in the same parasite species become eliminated */
-    bb: usize,
+    bb: f32,
     /** on the conditions that it is after the Lth generation and if less than an M fraction of host individuals (a total of reservation and wild host individuals) have been killed if a reservation host individual has a match score (including this additional exposure) with at least CC parasite individuals that is lower than DD, then that host individual is considered killed */
     cc: usize,
     /** on the conditions that it is after the Lth generation and if less than an M fraction of host individuals (a total of reservation and wild host individuals) have been killed if a reservation host individual has a match score (including this additional exposure) with at least CC parasite individuals that is lower than DD, then that host individual is considered killed */
@@ -66,7 +66,6 @@ pub struct SimulationPref {
 }
 
 impl SimulationPref {
-
     /** number of reservation hosts to start each simulation run */
     pub fn a(&self) -> usize {
         self.a
@@ -123,7 +122,7 @@ impl SimulationPref {
 
     /**
     no additional exposure until after the Lth generation
-    */
+     */
     pub fn l(&self) -> usize {
         self.l
     }
@@ -184,11 +183,15 @@ impl SimulationPref {
     }
 
     /** all parasite individuals with a total match score that is higher than BB% of all parasite individuals in the same parasite species become eliminated */
-    pub fn bb(&self) -> usize {
+    pub fn bb(&self) -> f32 {
         self.bb
     }
 
-    /** on the conditions that it is after the Lth generation and if less than an M fraction of host individuals (a total of reservation and wild host individuals) have been killed if a reservation host individual has a match score (including this additional exposure) with at least CC parasite individuals that is lower than DD, then that host individual is considered killed */
+    /** On the conditions that it is after the *L*th generation and if less than an *M* fraction of host
+       individuals (a total of reservation and wild host individuals) have been killed if a reservation
+       host individual has a match score (including this additional exposure) with at least *CC* parasite
+       individuals that is lower than *DD*, then that host individual is considered killed
+     */
     pub fn cc(&self) -> usize {
         self.cc
     }

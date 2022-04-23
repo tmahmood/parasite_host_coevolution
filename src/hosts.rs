@@ -4,12 +4,12 @@ use std::ptr::write;
 use ndarray::{Array, Array1, Ix, Ix1, Ix2};
 use ndarray_rand::RandomExt;
 use rand::{Rng, thread_rng};
-use rand::distributions::Uniform;
+use rand::distributions::{Distribution, Standard, Uniform};
 use rand::prelude::SliceRandom;
 use crate::{generate_individual, SimulationPref};
 use crate::a2d::A2D;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialOrd, PartialEq, Copy)]
 pub enum HostTypes {
     Reservation,
     Wild,
@@ -44,7 +44,7 @@ impl Display for Host {
         for number in &self.number_set {
             s += &format!("{}", number);
         }
-        write!(f, "{}:{}", self.host_type, s)
+        write!(f, "({}) {}:{}", self.alive, self.host_type, s)
     }
 }
 
@@ -72,16 +72,20 @@ impl Host {
         self.alive
     }
 
-    pub fn set_host_type(&mut self, host_type: HostTypes) {
+    pub fn set_host_type(&mut self, host_type: HostTypes) -> &mut Self{
         self.host_type = host_type;
+        self
+
     }
 
-    pub fn set_number_set(&mut self, number_set: Array1<usize>) {
+    pub fn set_number_set(&mut self, number_set: Array1<usize>) -> &mut Self {
         self.number_set = number_set;
+        self
     }
 
-    pub fn set_alive(&mut self, alive: bool) {
+    pub fn set_alive(&mut self, alive: bool) -> &mut Self {
         self.alive = alive;
+        self
     }
 }
 

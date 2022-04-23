@@ -1,4 +1,5 @@
 use std::fmt::{Display, Formatter};
+use ndarray::Array3;
 use rand::distributions::Uniform;
 use rand::distributions::Distribution;
 use rand::Rng;
@@ -7,24 +8,17 @@ use crate::{generate_individual, ParasiteSpeciesIndex, Simulation, SimulationPre
 use crate::a2d::A2D;
 
 
-pub async fn chose_parasites(simulation: &Simulation) -> Vec<ParasiteSpeciesIndex> {
-    let d = simulation.pref().d();
-    let h = simulation.pref().h();
-    // select random species
+pub(crate) fn random_parasite(pref: SimulationPref) -> ParasiteSpeciesIndex {
     let mut rng = rand::thread_rng();
-    let range = Uniform::new(0, d);
-    let species: Vec<usize> = (0..h).map(|_| rng.sample(&range)).collect();
-    // select random parasite individuals
-    let mut selected_parasites = vec![];
-    for species_index in species {
-        let mut range = Uniform::new(0, simulation.pref().e());
-        let parasite_index = range.sample(&mut rng);
-        selected_parasites.push(ParasiteSpeciesIndex {
-            species_index,
-            parasite_index,
-            match_count: 0
-        });
+    // select random species
+    let mut range = Uniform::new(0, pref.d());
+    let species_index = range.sample(&mut rng);
+    // select random parasite
+    let mut range = Uniform::new(0, pref.e());
+    let parasite_index = range.sample(&mut rng);
+    ParasiteSpeciesIndex {
+        species_index,
+        parasite_index,
+        match_count: 0
     }
-    selected_parasites
 }
-
