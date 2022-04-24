@@ -171,6 +171,10 @@ impl Simulation {
         &self.parasites
     }
 
+
+    pub fn parasites_mut(&mut self) -> &mut Array<usize, Ix3> {
+        &mut self.parasites
+    }
     pub fn no_of_simulation_run(&self) -> usize {
         self.no_of_simulation_run
     }

@@ -11,10 +11,10 @@ use crate::a2d::A2D;
 pub(crate) fn random_parasite(pref: SimulationPref) -> ParasiteSpeciesIndex {
     let mut rng = rand::thread_rng();
     // select random species
-    let mut range = Uniform::new(0, pref.d());
+    let range = Uniform::new(0, pref.d());
     let species_index = range.sample(&mut rng);
     // select random parasite
-    let mut range = Uniform::new(0, pref.e());
+    let range = Uniform::new(0, pref.e());
     let parasite_index = range.sample(&mut rng);
     ParasiteSpeciesIndex {
         species_index,

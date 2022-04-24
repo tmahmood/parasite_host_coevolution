@@ -38,6 +38,50 @@ async fn main_async() {
     additional_exposure(&mut simulation);
     birth_hosts(&mut simulation);
     parasite_truncation_and_birth(&mut simulation);
+    mutation(&mut simulation);
+}
+
+fn mutation(simulation: &mut Simulation) {
+    let c = simulation.pref().c();
+    let f = simulation.pref().f();
+    let g = simulation.pref().g();
+    let weights: Vec<f32> = (0..simulation.pref().f()).map(|_| simulation.pref().ee()).collect();
+    let dist = WeightedIndex::new(&weights).unwrap();
+    let choices = [0, 1];
+    let mut rng = rand::thread_rng();
+
+    for host in simulation.hosts_mut() {
+        let old = host.number_set().clone();
+        let mut m = host.number_set().clone();
+        let mut changes = 0;
+        for cc in 0..c {
+            let k = choices[dist.sample(&mut rng)];
+            if k == 1 {
+                changes += 1;
+                m[cc] = rng.gen_range(0..f);
+            }
+        }
+        host.set_number_set(m);
+        let new = host.number_set();
+        println!("{} {} {}", old, new, changes);
+    }
+
+    let weights: Vec<f32> = (0..simulation.pref().f()).map(|_| simulation.pref().k()).collect();
+    let dist = WeightedIndex::new(&weights).unwrap();
+    for mut parasite in simulation.parasites_mut().rows_mut() {
+        let old = parasite.to_owned();
+        let mut changes = 0;
+        for cc in 0..g {
+            let k = choices[dist.sample(&mut rng)];
+            if k == 1 {
+                parasite[cc] = rng.gen_range(0..f);
+                if old != parasite {
+                    changes += 1;
+                }
+            }
+        }
+        println!("{} {} {}", old, parasite, changes);
+    }
 }
 
 /**
@@ -82,7 +126,7 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
                 // get random existing parasite from the same species (s), excluding this parasite (i)
                 let parent_parasite_index = loop {
                     let i1 = rng.gen_range(0..simulation.pref().e());
-                    if i1 != *i { break i1 }
+                    if i1 != *i { break i1; }
                 };
                 let b = simulation.parasites().index_axis(Axis(0), *s);
                 let v = b.index_axis(Axis(0), *i);
@@ -96,8 +140,6 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
             }
         }
     }
-    //
-    // println!("{:#?} {:#?} {:#?} {:#?}", frequency, cumulative_frequency, percentiles, individuals_with_score);
 }
 
 #[inline]
@@ -234,8 +276,6 @@ pub fn birth_hosts(simulation: &mut Simulation) {
     let (no_of_dead_reservation_host, no_of_dead_wild_host, _) = simulation.count_dead_hosts();
     let no_of_reservation_host_alive = simulation.pref().a() - no_of_dead_reservation_host;
     let no_of_wild_host_alive = simulation.pref().b() - no_of_dead_wild_host;
-    let mut new_r_hosts = 0;
-    let mut new_w_hosts = 0;
 
     let (chance_reservation, chance_wild) = get_chances(
         no_of_dead_wild_host as f32,
