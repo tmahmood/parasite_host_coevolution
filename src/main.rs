@@ -31,14 +31,41 @@ pub mod simulation;
 
 
 async fn main_async() {
-    // TODO Need better way to feed the input file
+    // TODO Maybe Need better way to feed the input file
     let s: SimulationPref = serde_ini::from_str(&fs::read_to_string("params.conf").unwrap()).unwrap();
     let mut simulation = new_simulation(s.clone()).await;
+    println!("#S1##############");
     expose_all_hosts_to_parasites(&mut simulation).await;
+    println!("#S2##############");
     additional_exposure(&mut simulation);
+    println!("#S3##############");
     birth_hosts(&mut simulation);
+    println!("#S4##############");
     parasite_truncation_and_birth(&mut simulation);
+    println!("#S5##############");
     mutation(&mut simulation);
+    println!("#S6##############");
+    parasite_replacement(&mut simulation);
+}
+
+fn parasite_replacement(simulation: &mut Simulation) {
+    let mut replaced = 0;
+    let to_be_replaced = simulation.pref().q();
+    // find the max value
+    let species_match_score = *simulation.species_match_score().iter().max_by(|a, b| a.1.cmp(&b.1)).map(|(k, v)| v).unwrap();
+    let mut max_keys: Vec<usize> = simulation.species_match_score().iter().filter(|v| *v.1 == species_match_score).map(|v| *v.0).collect();
+    let i = generate_individual(simulation.pref().f(), simulation.pref().g());
+    while replaced < to_be_replaced && max_keys.len() > 0{
+        let ky = max_keys.pop().unwrap();
+        let mut species = simulation.parasites_mut().index_axis_mut(Axis(0), ky);
+        for (ii, iv) in i.iter().enumerate() {
+            for mut row in species.rows_mut() {
+                row[ii] = *iv;
+            }
+        }
+        replaced += 1;
+    }
+    println!("{:?} {:?}", simulation.species_match_score(), species_match_score);
 }
 
 fn mutation(simulation: &mut Simulation) {
@@ -197,6 +224,7 @@ impl Display for ParasiteSpeciesIndex {
 
 pub async fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
     let mut parasites_exposed_to = HashMap::new();
+    let mut species_match_score = HashMap::<usize, usize>::new();
     let all_parasites = simulation.parasites().clone();
     let hosts = simulation.hosts().clone();
     for i in 0..simulation.pref().a() + simulation.pref().b() {
@@ -207,6 +235,7 @@ pub async fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
             let mut p_idx = get_random_parasite(simulation, &parasites_exposed_to);
             let match_score = find_match_score(&host, &all_parasites, &mut p_idx, simulation.pref());
             parasites_exposed_to.insert((p_idx.species(), p_idx.parasite()), match_score);
+            *species_match_score.entry(p_idx.species()).or_insert(0) += match_score;
             if match_score < simulation.pref().n() {
                 match_score_bellow_threshold += 1;
             }
@@ -216,7 +245,9 @@ pub async fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
             simulation.kill_host(i);
         }
     }
+    println!("species match score: {:?}", species_match_score);
     simulation.update_parasites_exposed_to(parasites_exposed_to);
+    simulation.update_species_match_score(species_match_score);
 }
 
 fn get_random_parasite(simulation: &mut Simulation, parasites_exposed_to: &HashMap<(usize, usize), usize>) -> ParasiteSpeciesIndex {
@@ -230,11 +261,13 @@ fn get_random_parasite(simulation: &mut Simulation, parasites_exposed_to: &HashM
 
 
 pub fn additional_exposure(simulation: &mut Simulation) {
+    let mut species_match_score = simulation.species_match_score().clone();
     let (dead_reservation_hosts, _, total_dead_hosts) = simulation.count_dead_hosts();
     let alive_reservation_hosts = simulation.pref().a() - dead_reservation_hosts;
     // secondary exposure
     let secondary_allowed = (simulation.pref().a() + simulation.pref().b()) as f32 * simulation.pref().m();
-    if simulation.current_generation() < simulation.pref().l() && total_dead_hosts < secondary_allowed as usize {
+    if simulation.current_generation() >= simulation.pref().l() && total_dead_hosts < secondary_allowed as usize {
+        println!("Skipping");
         return;
     }
     let all_parasites = simulation.parasites().clone();
@@ -260,6 +293,8 @@ pub fn additional_exposure(simulation: &mut Simulation) {
             let mut p_idx = get_random_parasite(simulation, &parasites_exposed_to);
             let match_score = find_match_score(&simulation.hosts()[index], &all_parasites, &mut p_idx, simulation.pref());
             parasites_exposed_to.insert((p_idx.species(), p_idx.parasite()), match_score);
+            *species_match_score.entry(p_idx.species()).or_insert(0) += match_score;
+
             if match_score < simulation.pref().dd() {
                 match_score_bellow_threshold += 1;
             }
@@ -270,6 +305,7 @@ pub fn additional_exposure(simulation: &mut Simulation) {
         }
     }
     simulation.update_parasites_exposed_to(parasites_exposed_to);
+    simulation.update_species_match_score(species_match_score);
 }
 
 pub fn birth_hosts(simulation: &mut Simulation) {

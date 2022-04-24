@@ -1,11 +1,7 @@
-use std::fmt::{Display, Formatter};
-use ndarray::Array3;
+use std::fmt::{Formatter};
 use rand::distributions::Uniform;
 use rand::distributions::Distribution;
-use rand::Rng;
-use rand::prelude::SliceRandom;
-use crate::{generate_individual, ParasiteSpeciesIndex, Simulation, SimulationPref};
-use crate::a2d::A2D;
+use crate::{ParasiteSpeciesIndex, Simulation, SimulationPref};
 
 
 pub(crate) fn random_parasite(pref: SimulationPref) -> ParasiteSpeciesIndex {

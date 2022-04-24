@@ -16,6 +16,17 @@ pub struct Simulation {
     simulation_state: SimulationState,
 }
 
+impl Simulation {
+    pub(crate) fn species_match_score(&self) -> &HashMap<usize, usize> {
+        &self.simulation_state.species_match_score
+    }
+
+    pub(crate) fn update_species_match_score(&mut self, species_match_score: HashMap<usize, usize>) {
+        self.simulation_state.species_match_score = species_match_score;
+    }
+
+}
+
 
 pub struct SimulationState {
     current_generation: usize,
@@ -24,7 +35,7 @@ pub struct SimulationState {
     dead_reservation_hosts: Vec<usize>,
     dead_wild_hosts: Vec<usize>,
     match_scores: HashMap<(usize, usize), usize>,
-    match_scores_by_species: HashMap<usize, Vec<(usize, usize)>>
+    species_match_score: HashMap<usize, usize>
 }
 
 impl SimulationState {
@@ -37,7 +48,7 @@ impl SimulationState {
             dead_reservation_hosts: Default::default(),
             dead_wild_hosts: Default::default(),
             match_scores: Default::default(),
-            match_scores_by_species: Default::default(),
+            species_match_score: Default::default()
         }
     }
 
