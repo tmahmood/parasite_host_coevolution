@@ -9,8 +9,6 @@ use crate::{HostTypes, SimulationPref};
 
 pub struct Simulation {
     pref: SimulationPref,
-    no_of_simulation_run: usize,
-    no_of_generations: usize,
     hosts: Array<Host, Ix1>,
     parasites: Array<usize, Ix3>,
     simulation_state: SimulationState,
@@ -29,26 +27,26 @@ impl Simulation {
 
 
 pub struct SimulationState {
-    current_generation: usize,
     count_dead_reservation_hosts: usize,
     count_dead_wild_hosts: usize,
     dead_reservation_hosts: Vec<usize>,
     dead_wild_hosts: Vec<usize>,
     match_scores: HashMap<(usize, usize), usize>,
-    species_match_score: HashMap<usize, usize>
+    species_match_score: HashMap<usize, usize>,
+    current_generation: usize
 }
 
 impl SimulationState {
 
     pub fn default() -> Self {
         SimulationState {
-            current_generation: 0,
             count_dead_reservation_hosts: 0,
             count_dead_wild_hosts: 0,
             dead_reservation_hosts: Default::default(),
             dead_wild_hosts: Default::default(),
             match_scores: Default::default(),
-            species_match_score: Default::default()
+            species_match_score: Default::default(),
+            current_generation: 0
         }
     }
 
@@ -57,9 +55,6 @@ impl SimulationState {
             println!("{}", self.match_scores.get(&k).unwrap());
         }
         self.match_scores.insert(k, v)
-    }
-    pub fn current_generation(&self) -> usize {
-        self.current_generation
     }
     pub fn count_dead_reservation_hosts(&self) -> usize {
         self.count_dead_reservation_hosts
@@ -79,8 +74,6 @@ impl SimulationState {
 }
 
 pub async fn new_simulation(pref: SimulationPref) -> Simulation {
-    let total = pref.a() + pref.b();
-    // Array::random((total), Uniform::new(0, pref.f()));
     // create random hosts
     let hosts = create_random_hosts(&pref);
     // create parasites for each species
@@ -93,8 +86,6 @@ pub async fn new_simulation(pref: SimulationPref) -> Simulation {
     let result = join!(hosts, parasites);
     Simulation {
         pref: pref.clone(),
-        no_of_simulation_run: pref.gg(),
-        no_of_generations: pref.ff(),
         hosts: result.0,
         parasites: result.1,
         simulation_state: SimulationState::default(),
@@ -122,20 +113,8 @@ impl Simulation {
         self.simulation_state.match_scores.clone()
     }
 
-    pub fn count_dead_hosts(&self) -> (usize, usize, usize) {
-        (
-            self.simulation_state.count_dead_reservation_hosts,
-            self.simulation_state.count_dead_wild_hosts,
-            self.simulation_state.count_dead_wild_hosts + self.simulation_state.count_dead_reservation_hosts
-        )
-    }
-
     pub fn pref(&self) -> SimulationPref {
         self.pref.clone()
-    }
-
-    pub fn no_of_generations(&self) -> usize {
-        self.no_of_generations
     }
 
     pub fn hosts(&self) -> &Array<Host, Ix1> {
@@ -174,6 +153,36 @@ impl Simulation {
         }
     }
 
+    pub fn count_alive_hosts(&mut self) -> (usize, usize, usize) {
+        let mut count_hosts_alive_reservation = 0;
+        let mut count_hosts_alive_wild = 0;
+        for host in self.hosts.iter() {
+            if host.alive() {
+                if host.host_type() == HostTypes::Reservation {
+                    count_hosts_alive_reservation += 1;
+                } else {
+                    count_hosts_alive_wild += 1;
+                }
+            }
+        }
+        (count_hosts_alive_reservation + count_hosts_alive_wild, count_hosts_alive_reservation, count_hosts_alive_wild)
+    }
+
+    pub fn count_dead_hosts(&mut self) -> (usize, usize, usize) {
+        let mut count_hosts_dead_reservation = 0;
+        let mut count_hosts_dead_wild = 0;
+        for host in self.hosts.iter() {
+            if !host.alive() {
+                if host.host_type() == HostTypes::Reservation {
+                    count_hosts_dead_reservation += 1;
+                } else {
+                    count_hosts_dead_wild += 1;
+                }
+            }
+        }
+        (count_hosts_dead_wild + count_hosts_dead_reservation, count_hosts_dead_reservation, count_hosts_dead_wild)
+    }
+
     pub fn hosts_mut(&mut self) -> &mut Array<Host, Ix1> {
         &mut self.hosts
     }
@@ -182,12 +191,8 @@ impl Simulation {
         &self.parasites
     }
 
-
     pub fn parasites_mut(&mut self) -> &mut Array<usize, Ix3> {
         &mut self.parasites
-    }
-    pub fn no_of_simulation_run(&self) -> usize {
-        self.no_of_simulation_run
     }
 
     pub fn current_generation(&self) -> usize {
@@ -195,6 +200,7 @@ impl Simulation {
     }
 
     pub fn next_generation(&mut self) {
+        // reset simulation state
         self.simulation_state = SimulationState::default();
         self.simulation_state.current_generation += 1;
     }
