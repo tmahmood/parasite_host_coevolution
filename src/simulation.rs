@@ -1,6 +1,5 @@
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-use futures::join;
+use std::fmt::{Formatter};
 use ndarray::{Array, Axis, Ix, Ix1, Ix2, Ix3};
 use ndarray_rand::RandomExt;
 use rand::distributions::Uniform;
@@ -9,9 +8,14 @@ use crate::{HostTypes, SimulationPref};
 
 pub struct Simulation {
     pref: SimulationPref,
-    hosts: Array<Host, Ix1>,
-    parasites: Array<usize, Ix3>,
     simulation_state: SimulationState,
+    generations: Vec<SimulationState>,
+}
+
+impl Simulation {
+    pub(crate) fn update_host_match_score(&mut self, host_match_score: HashMap<usize, usize>) {
+        self.simulation_state.host_match_score = host_match_score;
+    }
 }
 
 impl Simulation {
@@ -22,86 +26,70 @@ impl Simulation {
     pub(crate) fn update_species_match_score(&mut self, species_match_score: HashMap<usize, usize>) {
         self.simulation_state.species_match_score = species_match_score;
     }
-
 }
 
-
+#[derive(Clone, Debug)]
 pub struct SimulationState {
-    count_dead_reservation_hosts: usize,
-    count_dead_wild_hosts: usize,
-    dead_reservation_hosts: Vec<usize>,
-    dead_wild_hosts: Vec<usize>,
     match_scores: HashMap<(usize, usize), usize>,
     species_match_score: HashMap<usize, usize>,
-    current_generation: usize
+    current_generation: usize,
+    hosts: Array<Host, Ix1>,
+    parasites: Array<usize, Ix3>,
+    host_match_score: HashMap<usize, usize>,
+}
+
+impl Default for SimulationState {
+    fn default() -> Self {
+        SimulationState {
+            match_scores: Default::default(),
+            species_match_score: Default::default(),
+            current_generation: 0,
+            hosts: Default::default(),
+            parasites: Default::default(),
+            host_match_score: Default::default()
+        }
+    }
 }
 
 impl SimulationState {
-
-    pub fn default() -> Self {
-        SimulationState {
-            count_dead_reservation_hosts: 0,
-            count_dead_wild_hosts: 0,
-            dead_reservation_hosts: Default::default(),
-            dead_wild_hosts: Default::default(),
-            match_scores: Default::default(),
-            species_match_score: Default::default(),
-            current_generation: 0
-        }
-    }
-
     pub fn update_match_store(&mut self, k: (usize, usize), v: usize) -> Option<usize> {
         if self.match_scores.contains_key(&k) {
             println!("{}", self.match_scores.get(&k).unwrap());
         }
         self.match_scores.insert(k, v)
     }
-    pub fn count_dead_reservation_hosts(&self) -> usize {
-        self.count_dead_reservation_hosts
-    }
-    pub fn count_dead_wild_hosts(&self) -> usize {
-        self.count_dead_wild_hosts
-    }
-    pub fn dead_reservation_hosts(&self) -> &Vec<usize> {
-        &self.dead_reservation_hosts
-    }
-    pub fn dead_wild_hosts(&self) -> &Vec<usize> {
-        &self.dead_wild_hosts
-    }
+
     pub fn match_scores(&self) -> &HashMap<(usize, usize), usize> {
         &self.match_scores
     }
 }
 
-pub async fn new_simulation(pref: SimulationPref) -> Simulation {
-    // create random hosts
+pub fn new_simulation(pref: SimulationPref) -> Simulation {
     let hosts = create_random_hosts(&pref);
-    // create parasites for each species
-    let parasites = async {
-        Array::random(
-            (pref.d(), pref.e(), pref.g()),
-            Uniform::new(0, pref.f()),
-        )
-    };
-    let result = join!(hosts, parasites);
+    let parasites: Array<usize, Ix3> = Array::random(
+        (pref.d(), pref.e(), pref.g()),
+        Uniform::new(0, pref.f()),
+    );
     Simulation {
         pref: pref.clone(),
-        hosts: result.0,
-        parasites: result.1,
-        simulation_state: SimulationState::default(),
+        simulation_state: SimulationState {
+            hosts,
+            parasites,
+            ..SimulationState::default()
+        },
+        generations: vec![],
     }
 }
 
 impl Simulation {
-
     /**
     update parasite with parent parasite's number set
-    */
+     */
     pub(crate) fn update_parasites(&mut self, species: usize, parasite: usize, parent: usize) {
-        let base = self.parasites.index_axis(Axis(0), species);
-        let parent_view = base.index_axis( Axis(0), parent).to_owned();
+        let base = self.simulation_state.parasites.index_axis(Axis(0), species);
+        let parent_view = base.index_axis(Axis(0), parent).to_owned();
         for v in 0..parent_view.len() {
-            self.parasites[[species, parasite, v]] = parent_view[v];
+            self.simulation_state.parasites[[species, parasite, v]] = parent_view[v];
         }
     }
 
@@ -109,7 +97,7 @@ impl Simulation {
         self.simulation_state.match_scores = parasites_exposed_to;
     }
 
-    pub(crate) fn parasites_exposed_to(&mut self) -> HashMap<(usize, usize), usize>{
+    pub(crate) fn parasites_exposed_to(&mut self) -> HashMap<(usize, usize), usize> {
         self.simulation_state.match_scores.clone()
     }
 
@@ -118,20 +106,16 @@ impl Simulation {
     }
 
     pub fn hosts(&self) -> &Array<Host, Ix1> {
-        &self.hosts
+        &self.simulation_state.hosts
     }
 
     pub fn update_dead_host(&mut self, index: usize, parent_host_index: usize) -> (usize, usize, usize) {
         let (host_type, number_set) = {
-            let parent_host = &self.hosts[parent_host_index];
+            let parent_host = &self.simulation_state.hosts[parent_host_index];
             let host_type = parent_host.host_type();
-            match host_type {
-                HostTypes::Reservation => self.simulation_state.count_dead_reservation_hosts -= 1,
-                HostTypes::Wild => self.simulation_state.count_dead_wild_hosts -= 1,
-            }
             (host_type, parent_host.number_set().clone())
         };
-        self.hosts[index]
+        self.simulation_state.hosts[index]
             .set_host_type(host_type)
             .set_number_set(number_set)
             .set_alive(true);
@@ -139,24 +123,18 @@ impl Simulation {
     }
 
     pub fn kill_host(&mut self, index: usize) {
-        let host = &mut self.hosts[index];
+        let host = &mut self.simulation_state.hosts[index];
         host.set_alive(false);
-        match host.host_type() {
-            HostTypes::Reservation =>  {
-                self.simulation_state.count_dead_reservation_hosts += 1;
-                self.simulation_state.dead_reservation_hosts.push(index);
-            },
-            HostTypes::Wild => {
-                self.simulation_state.count_dead_wild_hosts += 1;
-                self.simulation_state.dead_wild_hosts.push(index);
-            }
-        }
     }
 
-    pub fn count_alive_hosts(&mut self) -> (usize, usize, usize) {
+    pub fn count_alive_hosts(&self) -> (usize, usize, usize) {
+        self.count_alive_hosts_from_generation(self.simulation_state())
+    }
+
+    pub fn count_alive_hosts_from_generation(&self, simulation_state: &SimulationState) -> (usize, usize, usize) {
         let mut count_hosts_alive_reservation = 0;
         let mut count_hosts_alive_wild = 0;
-        for host in self.hosts.iter() {
+        for host in simulation_state.hosts.iter() {
             if host.alive() {
                 if host.host_type() == HostTypes::Reservation {
                     count_hosts_alive_reservation += 1;
@@ -171,7 +149,7 @@ impl Simulation {
     pub fn count_dead_hosts(&mut self) -> (usize, usize, usize) {
         let mut count_hosts_dead_reservation = 0;
         let mut count_hosts_dead_wild = 0;
-        for host in self.hosts.iter() {
+        for host in self.simulation_state.hosts.iter() {
             if !host.alive() {
                 if host.host_type() == HostTypes::Reservation {
                     count_hosts_dead_reservation += 1;
@@ -184,15 +162,15 @@ impl Simulation {
     }
 
     pub fn hosts_mut(&mut self) -> &mut Array<Host, Ix1> {
-        &mut self.hosts
+        &mut self.simulation_state.hosts
     }
 
     pub fn parasites(&self) -> &Array<usize, Ix3> {
-        &self.parasites
+        &self.simulation_state.parasites
     }
 
     pub fn parasites_mut(&mut self) -> &mut Array<usize, Ix3> {
-        &mut self.parasites
+        &mut self.simulation_state.parasites
     }
 
     pub fn current_generation(&self) -> usize {
@@ -200,8 +178,12 @@ impl Simulation {
     }
 
     pub fn next_generation(&mut self) {
-        // reset simulation state
-        self.simulation_state = SimulationState::default();
+        self.generations.push(self.simulation_state.clone());
+        self.simulation_state = SimulationState {
+            hosts: self.simulation_state.hosts.to_owned(),
+            parasites: self.simulation_state.parasites.to_owned(),
+            ..Default::default()
+        };
         self.simulation_state.current_generation += 1;
     }
     pub fn simulation_state(&self) -> &SimulationState {
@@ -211,16 +193,26 @@ impl Simulation {
     pub fn set_simulation_state(&mut self, simulation_state: SimulationState) {
         self.simulation_state = simulation_state;
     }
-}
 
+    pub fn generate_report(&self) {
+        let mut wild_loner = 0;
+        let mut resv_loner = 0;
+        let mut more_wild = 0;
+        let mut more_reserv = 0;
+        let mut tied = 0;
+        for generation in &self.generations {
+            let (_, r, w) = self.count_alive_hosts_from_generation(generation);
+            if r > w { more_reserv += 1 }
+            if r < w { more_wild += 1 }
+            if r == w { tied += 1 }
+            if r == 0 { wild_loner += 1 }
+            if w == 0 { resv_loner += 1 }
+        }
 
-impl Display for Simulation {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut s = String::new();
-        let hosts = self.hosts();
-        s.push_str(&hosts.to_string());
-        s.push_str("\n");
-        s.push_str(&format!("{}", self.parasites()));
-        write!(f, "{}", s)
+        println!("- {} runs ended with wild individuals the lone type remaining", wild_loner);
+        println!("- {} runs ended with reservation individuals the lone type remaining", resv_loner);
+        println!("- {} runs ended with wild individuals a higher quantity than reservation individuals", more_wild);
+        println!("- {} runs ended with reservation individuals a higher quantity than wild individuals", more_reserv);
+        println!("- {} runs ended with the quantities of the two types tied", tied);
     }
 }

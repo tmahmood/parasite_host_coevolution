@@ -5,18 +5,19 @@ extern crate rand;
 extern crate core;
 
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-use std::fs;
+use std::fmt::{Display, format, Formatter};
+use std::{fs, io};
+use std::fs::{create_dir_all};
+use std::io::Write;
 use futures::executor::block_on;
 use ndarray::{Array, Array1, ArrayBase, Axis, Ix, Ix1, Ix3, OwnedRepr};
 use ndarray_rand::{RandomExt};
 use rand::distributions::{Uniform, WeightedIndex};
 use rand::prelude::*;
 use rand::{Rng, thread_rng};
-use rand::seq::index::sample;
+use rayon::prelude::*;
 use parasites::random_parasite;
 use crate::hosts::{Host, HostTypes};
-use crate::HostTypes::Reservation;
 use crate::simulation::{new_simulation, Simulation};
 use crate::simulation_pref::SimulationPref;
 
@@ -25,7 +26,6 @@ use crate::simulation_pref::SimulationPref;
 // likely to get chosen for reproduction or death because lists weren't shuffled, and that causes
 // the random processes to be biased.
 
-pub mod a2d;
 pub mod simulation_pref;
 pub mod parasites;
 pub mod hosts;
@@ -34,41 +34,36 @@ pub mod simulation;
 
 async fn main_async() {
     let s: SimulationPref = serde_ini::from_str(&fs::read_to_string("params.conf").unwrap()).unwrap();
-    for gg in 0..s.gg() {
-        for ff in 0..s.ff() {
-            println!("simulation: {}, generation: {}", gg, ff);
-            run_generation(s.clone()).await;
-        }
-    }
+    (0..s.gg()).into_par_iter().for_each(|gg| {
+        run_simulation(gg, s.clone());
+    });
 }
 
-async fn run_generation(s: SimulationPref) {
-    let mut simulation = new_simulation(s.clone()).await;
-    println!("#S1##############");
-    expose_all_hosts_to_parasites(&mut simulation).await;
-    println!("#S2##############");
-    additional_exposure(&mut simulation);
-    println!("checking if should continue ...");
-    if !should_continue(&mut simulation) {
-        println!("Only one type of host remains, concluding this generation");
-        return;
+fn run_simulation(gg: usize, pref: SimulationPref) {
+    let mut simulation = new_simulation(pref.clone());
+    for ff in 0..pref.ff() {
+        print!("simulation: {} generation: {}\r", gg, ff);
+        io::stdout().flush().unwrap();
+        expose_all_hosts_to_parasites(&mut simulation);
+        additional_exposure(&mut simulation);
+        if !should_continue(&mut simulation) {
+            println!("Only one type of host remains, concluding this generation");
+            return;
+        }
+        birth_hosts_version_1(&mut simulation);
+        parasite_truncation_and_birth(&mut simulation);
+        mutation(&mut simulation);
+        parasite_replacement(&mut simulation);
+        simulation.next_generation();
     }
-    println!("#S3##############");
-    birth_hosts(&mut simulation);
-    println!("#S4##############");
-    parasite_truncation_and_birth(&mut simulation);
-    println!("#S5##############");
-    mutation(&mut simulation);
-    println!("#S6##############");
-    parasite_replacement(&mut simulation);
-    simulation.next_generation();
+    println!();
+    simulation.generate_report();
 }
 
 fn should_continue(simulation: &mut Simulation) -> bool {
-    let (t, r, w) = simulation.count_dead_hosts();
+    let (t, r, w) = simulation.count_alive_hosts();
     !(r == 0 || w == 0)
 }
-
 
 fn parasite_replacement(simulation: &mut Simulation) {
     let mut replaced = 0;
@@ -87,7 +82,6 @@ fn parasite_replacement(simulation: &mut Simulation) {
         }
         replaced += 1;
     }
-    println!("{:?} {:?}", simulation.species_match_score(), species_match_score);
 }
 
 fn mutation(simulation: &mut Simulation) {
@@ -98,9 +92,7 @@ fn mutation(simulation: &mut Simulation) {
     let dist = WeightedIndex::new(&weights).unwrap();
     let choices = [0, 1];
     let mut rng = rand::thread_rng();
-
     for host in simulation.hosts_mut() {
-        let old = host.number_set().clone();
         let mut m = host.number_set().clone();
         let mut changes = 0;
         for cc in 0..c {
@@ -111,9 +103,7 @@ fn mutation(simulation: &mut Simulation) {
             }
         }
         host.set_number_set(m);
-        let new = host.number_set();
     }
-
     let weights: Vec<f32> = (0..simulation.pref().f()).map(|_| simulation.pref().k()).collect();
     let dist = WeightedIndex::new(&weights).unwrap();
     for mut parasite in simulation.parasites_mut().rows_mut() {
@@ -161,12 +151,12 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
     let mut percentiles = HashMap::<usize, f32>::new();
     // calculate cumulative frequency of each match
     let mut rng = thread_rng();
-    println!("{:?} {:?}\n{:?}", frequency, cumulative_frequency, match_scores);
     for i in 1..cumulative_frequency.len() {
         cumulative_frequency[i] += cumulative_frequency[i - 1];
         percentiles.insert(i, calculate_percentile(cumulative_frequency[i], *frequency.get(&i).unwrap(), match_scores.len()));
         if percentiles.get(&i).unwrap() >= &simulation.pref().bb() {
             let parasites = individuals_with_score.get(&i).unwrap();
+            let mut _s = String::new();
             for (s, i) in parasites {
                 // get random existing parasite from the same species (s), excluding this parasite (i)
                 let parent_parasite_index = loop {
@@ -175,13 +165,13 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
                 };
                 let b = simulation.parasites().index_axis(Axis(0), *s);
                 let v = b.index_axis(Axis(0), *i);
-                print!("{: >2} {: >3}: {: >2} : ", s, i, v);
+                _s.push_str(&format!("{: >2} {: >3}: {: >2} : ", s, i, v));
                 let v = b.index_axis(Axis(0), parent_parasite_index);
-                print!("{: >2} -> ", v);
+                _s.push_str(&format!("{: >2} -> ", v));
                 simulation.update_parasites(*s, *i, parent_parasite_index);
                 let b = simulation.parasites().index_axis(Axis(0), *s);
                 let v = b.index_axis(Axis(0), *i);
-                println!("{: >2}", v);
+                _s.push_str(&format!("{: >2}\n", v));
             }
         }
     }
@@ -240,14 +230,14 @@ impl Display for ParasiteSpeciesIndex {
     }
 }
 
-pub async fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
+pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
     let mut parasites_exposed_to = HashMap::new();
     let mut species_match_score = HashMap::<usize, usize>::new();
+    let mut host_match_score = HashMap::<usize, usize>::new();
     let all_parasites = simulation.parasites().clone();
     let hosts = simulation.hosts().clone();
     for i in 0..simulation.pref().a() + simulation.pref().b() {
         let host = &hosts[i];
-        println!("            {}", host.number_set());
         let mut match_score_bellow_threshold = 0;
         for _ in 0..simulation.pref().h() {
             let mut p_idx = get_random_parasite(simulation, &parasites_exposed_to);
@@ -257,15 +247,18 @@ pub async fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
             if match_score < simulation.pref().n() {
                 match_score_bellow_threshold += 1;
             }
+            if match_score < simulation.pref().j() {
+                *host_match_score.entry(i).or_insert(0) += 1;
+            }
         }
-        println!("----------------------");
         if match_score_bellow_threshold >= simulation.pref().x() {
             simulation.kill_host(i);
         }
+
     }
-    println!("species match score: {:?}", species_match_score);
     simulation.update_parasites_exposed_to(parasites_exposed_to);
     simulation.update_species_match_score(species_match_score);
+    simulation.update_host_match_score(host_match_score);
 }
 
 fn get_random_parasite(simulation: &mut Simulation, parasites_exposed_to: &HashMap<(usize, usize), usize>) -> ParasiteSpeciesIndex {
@@ -277,21 +270,18 @@ fn get_random_parasite(simulation: &mut Simulation, parasites_exposed_to: &HashM
     }
 }
 
-
 pub fn additional_exposure(simulation: &mut Simulation) {
     let mut species_match_score = simulation.species_match_score().clone();
-    let (total_dead_hosts, dead_reservation_hosts, _ ) = simulation.count_dead_hosts();
-    let (total_alive_hosts, alive_reservation_hosts, _ ) = simulation.count_alive_hosts();
-    //let alive_reservation_hosts = simulation.pref().a() - dead_reservation_hosts;
+    let mut host_match_score = HashMap::<usize, usize>::new();
+    let (total_dead_hosts, _, _) = simulation.count_dead_hosts();
+    let (_, alive_reservation_hosts, _) = simulation.count_alive_hosts();
     // secondary exposure
     let secondary_allowed = (simulation.pref().a() + simulation.pref().b()) as f32 * simulation.pref().m();
     if simulation.current_generation() >= simulation.pref().l() && total_dead_hosts < secondary_allowed as usize {
-        println!("Skipping");
         return;
     }
     let all_parasites = simulation.parasites().clone();
     let no_of_additional_host = (alive_reservation_hosts as f32 * simulation.pref().aa()).ceil() as usize;
-    println!("# host {}", no_of_additional_host);
     let mut rng = thread_rng();
     let mut hosts_to_try = 0;
     let mut parasites_exposed_to = simulation.parasites_exposed_to();
@@ -304,36 +294,32 @@ pub fn additional_exposure(simulation: &mut Simulation) {
         if !simulation.hosts()[index].alive() { continue; }
         hosts_to_try += 1;
         // expose to parasite
-        println!("            {}", simulation.hosts()[index].number_set());
         let mut match_score_bellow_threshold = 0;
         for _ in 0..simulation.pref().i() {
-            // we should not expose the host to same parasite more than once in current generation
-            // so we will pick random parasite till we get unused one
             let mut p_idx = get_random_parasite(simulation, &parasites_exposed_to);
             let match_score = find_match_score(&simulation.hosts()[index], &all_parasites, &mut p_idx, simulation.pref());
             parasites_exposed_to.insert((p_idx.species(), p_idx.parasite()), match_score);
             *species_match_score.entry(p_idx.species()).or_insert(0) += match_score;
-
             if match_score < simulation.pref().dd() {
                 match_score_bellow_threshold += 1;
             }
+            if match_score < simulation.pref().j() {
+                *host_match_score.entry(i).or_insert(0) += 1;
+            }
         }
-        println!("----------------------");
         if match_score_bellow_threshold >= simulation.pref().cc() {
             simulation.kill_host(index);
         }
     }
     simulation.update_parasites_exposed_to(parasites_exposed_to);
     simulation.update_species_match_score(species_match_score);
-    let (k1, k2, k3) = simulation.count_dead_hosts();
-    println!("t: {} r: {} w: {}", k1, k2, k3);
+    simulation.update_host_match_score(host_match_score);
 }
 
-pub fn birth_hosts(simulation: &mut Simulation) {
+pub fn birth_hosts_version_1(simulation: &mut Simulation) {
     let (_, no_of_dead_reservation_host, no_of_dead_wild_host) = simulation.count_dead_hosts();
     let (_, no_of_reservation_host_alive, no_of_wild_host_alive) = simulation.count_alive_hosts();
-
-    let (chance_reservation, chance_wild) = get_chances(
+    let (chance_reservation, chance_wild) = get_chances_v1(
         no_of_dead_wild_host as f32,
         no_of_reservation_host_alive as f32,
         no_of_dead_reservation_host as f32,
@@ -342,20 +328,12 @@ pub fn birth_hosts(simulation: &mut Simulation) {
         simulation.pref().o(),
         simulation.pref().p(),
     );
-    println!("{} {}\n----------------------", chance_reservation, chance_wild);
-
-    let mut new_born = 0;
     let mut rng = rand::thread_rng();
     let choices = vec![0, 1];
     let dist = WeightedIndex::new(vec![chance_wild, chance_reservation]).unwrap();
-    let (mut total_dead_hosts, mut count_dead_r, mut count_dead_w) = simulation.count_dead_hosts();
-    println!("r: {: >3} w: {: >3} t: {: >3}", count_dead_r, count_dead_w, total_dead_hosts);
-    println!("Replacing dead hosts ...");
     loop {
         // pick up parent host
-        let mut pick_reservation_host = choices[dist.sample(&mut rng)];
-        if pick_reservation_host == 1 && count_dead_r == 0 { pick_reservation_host = 0 }
-        if pick_reservation_host == 0 && count_dead_w == 0 { pick_reservation_host = 1 }
+        let pick_reservation_host = choices[dist.sample(&mut rng)];
         let parent_index = loop {
             let p = rng.gen_range(0..simulation.hosts().len());
             let p_host = &simulation.hosts()[p];
@@ -363,13 +341,13 @@ pub fn birth_hosts(simulation: &mut Simulation) {
                 break p;
             }
             if pick_reservation_host == 0 && p_host.host_type() == HostTypes::Wild && p_host.alive() {
-                break p
+                break p;
             }
         };
         let parent_host = simulation.hosts()[parent_index].clone();
         let mut index = None;
         for (ii, host) in simulation.hosts().iter().enumerate() {
-            if !host.alive() && host.host_type() == parent_host.host_type() {
+            if !host.alive() {
                 index = Some(ii);
                 break;
             }
@@ -379,18 +357,12 @@ pub fn birth_hosts(simulation: &mut Simulation) {
         }
         let host_index = index.unwrap();
         // now we get the host
-        let k = simulation.update_dead_host(host_index, parent_index);
-        count_dead_r = k.1;
-        count_dead_w = k.2;
-        total_dead_hosts = k.0;
-        new_born += 1;
-        println!("new_born: {: >3} {: >3}, total_dead: {: >3}, dead_r: {: >3}, dead_w: {: >3}", new_born, parent_host, total_dead_hosts, count_dead_r, count_dead_w);
+        let (total_dead_hosts, _, _) = simulation.update_dead_host(host_index, parent_index);
         if total_dead_hosts == 0 { break; }
     }
 }
 
-pub fn get_chances(v: f32, u: f32, w: f32, y: f32, t: f32, o: f32, p: f32) -> (f32, f32) {
-    println!("v: {} u: {} w: {} y: {} t: {} o: {} p: {}", v, u, w, y, t, o, p);
+pub fn get_chances_v1(v: f32, u: f32, w: f32, y: f32, t: f32, o: f32, p: f32) -> (f32, f32) {
     (
         (1. + o * y * w / u + (1. - o) * y * w / (t + u) + (1. - o) * y * v / (t + u) - p),  // for reservation host individuals
         (1. + o * y * v / t + (1. - o) * y * v / (t + u) + (1. - o) * y * w / (t + u)), // for wild host individuals
@@ -400,20 +372,12 @@ pub fn get_chances(v: f32, u: f32, w: f32, y: f32, t: f32, o: f32, p: f32) -> (f
 pub fn find_match_score(host: &Host, all_parasites: &ArrayBase<OwnedRepr<usize>, Ix3>, p_idx: &mut ParasiteSpeciesIndex, pref: SimulationPref) -> usize {
     let mut match_count = 0;
     let number_set = host.number_set();
-    let mut p = String::new();
     let index = p_idx.species();
-    print!(" ");
     for ii in index..index + pref.g() {
-        p.push_str(&format!("{}, ", all_parasites[[index, ii - index, 0]]));
         if number_set[ii] == all_parasites[[index, ii - index, 0]] {
             match_count += 1
         }
     }
-    print!("{} | {}->{} || ", match_count, index, index + pref.g());
-    for _ in 0..index {
-        print!("   ");
-    }
-    println!("{}", p.trim());
     p_idx.match_count = match_count;
     match_count
 }

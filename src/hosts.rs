@@ -7,7 +7,6 @@ use rand::{Rng, thread_rng};
 use rand::distributions::{Distribution, Standard, Uniform};
 use rand::prelude::SliceRandom;
 use crate::{generate_individual, SimulationPref};
-use crate::a2d::A2D;
 
 #[derive(Clone, Debug, PartialOrd, PartialEq, Copy)]
 pub enum HostTypes {
@@ -21,7 +20,7 @@ impl Display for HostTypes {
             HostTypes::Reservation => "R",
             HostTypes::Wild => "W"
         };
-        write!(f, "{}", r)
+        write!(f, "{} ", r)
     }
 }
 
@@ -38,13 +37,23 @@ pub struct Host {
     alive: bool,
 }
 
+impl Default for Host {
+    fn default() -> Self {
+        Host {
+            host_type: HostTypes::Reservation,
+            number_set: Default::default(),
+            alive: true
+        }
+    }
+}
+
 impl Display for Host {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut s = String::new();
         for number in &self.number_set {
             s += &format!("{}", number);
         }
-        write!(f, "({}) {}:{}", self.alive, self.host_type, s)
+        write!(f, "({}) {}:{}\n", self.alive, self.host_type, s)
     }
 }
 
@@ -89,7 +98,7 @@ impl Host {
     }
 }
 
-pub async fn create_random_hosts(pref: &SimulationPref) -> Array1<Host> {
+pub fn create_random_hosts(pref: &SimulationPref) -> Array1<Host> {
     let total = (pref.a() + pref.b()) as usize;
     let mut all_hosts = Vec::with_capacity(total);
     (0..pref.a()).for_each(|_| {
