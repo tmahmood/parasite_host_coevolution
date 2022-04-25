@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::fmt::{Display, format, Formatter};
 use std::ptr::write;
+
 use ndarray::{Array, Array1, Ix, Ix1, Ix2};
 use ndarray_rand::RandomExt;
 use rand::{Rng, thread_rng};
 use rand::distributions::{Distribution, Standard, Uniform};
 use rand::prelude::SliceRandom;
+
 use crate::{generate_individual, SimulationPref};
 
 #[derive(Clone, Debug, PartialOrd, PartialEq, Copy)]
@@ -20,7 +22,7 @@ impl Display for HostTypes {
             HostTypes::Reservation => "R",
             HostTypes::Wild => "W"
         };
-        write!(f, "{} ", r)
+        write!(f, "{}", r)
     }
 }
 
@@ -53,7 +55,7 @@ impl Display for Host {
         for number in &self.number_set {
             s += &format!("{}", number);
         }
-        write!(f, "({}) {}:{}\n", self.alive, self.host_type, s)
+        write!(f, "({}) {}:{}", self.alive, self.host_type, s)
     }
 }
 

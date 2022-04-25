@@ -1,15 +1,27 @@
 use std::collections::HashMap;
-use std::fmt::{Formatter};
+use std::fmt::{Display, Formatter};
+
 use ndarray::{Array, Axis, Ix, Ix1, Ix2, Ix3};
 use ndarray_rand::RandomExt;
 use rand::distributions::Uniform;
-use crate::hosts::{create_random_hosts, Host};
+use rayon::prelude::IntoParallelRefIterator;
+
 use crate::{HostTypes, SimulationPref};
+use crate::hosts::{create_random_hosts, Host};
+
+#[derive(Clone)]
+pub enum ProgramVersions {
+    One,
+    Two,
+    Three,
+    Four,
+}
 
 pub struct Simulation {
     pref: SimulationPref,
     simulation_state: SimulationState,
     generations: Vec<SimulationState>,
+    program_version: ProgramVersions
 }
 
 impl Simulation {
@@ -46,7 +58,7 @@ impl Default for SimulationState {
             current_generation: 0,
             hosts: Default::default(),
             parasites: Default::default(),
-            host_match_score: Default::default()
+            host_match_score: Default::default(),
         }
     }
 }
@@ -61,6 +73,10 @@ impl SimulationState {
 
     pub fn match_scores(&self) -> &HashMap<(usize, usize), usize> {
         &self.match_scores
+    }
+
+    pub fn host_match_score(&self) -> &HashMap<usize, usize> {
+        &self.host_match_score
     }
 }
 
@@ -78,6 +94,7 @@ pub fn new_simulation(pref: SimulationPref) -> Simulation {
             ..SimulationState::default()
         },
         generations: vec![],
+        program_version: ProgramVersions::One
     }
 }
 
@@ -92,6 +109,8 @@ impl Simulation {
             self.simulation_state.parasites[[species, parasite, v]] = parent_view[v];
         }
     }
+
+
 
     pub(crate) fn update_parasites_exposed_to(&mut self, parasites_exposed_to: HashMap<(usize, usize), usize>) {
         self.simulation_state.match_scores = parasites_exposed_to;
@@ -194,25 +213,49 @@ impl Simulation {
         self.simulation_state = simulation_state;
     }
 
-    pub fn generate_report(&self) {
-        let mut wild_loner = 0;
-        let mut resv_loner = 0;
-        let mut more_wild = 0;
-        let mut more_reserv = 0;
-        let mut tied = 0;
-        for generation in &self.generations {
-            let (_, r, w) = self.count_alive_hosts_from_generation(generation);
-            if r > w { more_reserv += 1 }
-            if r < w { more_wild += 1 }
-            if r == w { tied += 1 }
-            if r == 0 { wild_loner += 1 }
-            if w == 0 { resv_loner += 1 }
-        }
 
-        println!("- {} runs ended with wild individuals the lone type remaining", wild_loner);
-        println!("- {} runs ended with reservation individuals the lone type remaining", resv_loner);
-        println!("- {} runs ended with wild individuals a higher quantity than reservation individuals", more_wild);
-        println!("- {} runs ended with reservation individuals a higher quantity than wild individuals", more_reserv);
-        println!("- {} runs ended with the quantities of the two types tied", tied);
+    pub fn generate_report(&self) -> HostsCount {
+        let (_, r, w)= self.count_alive_hosts_from_generation(self.generations.last().unwrap());
+        HostsCount {
+            wild_host: w,
+            reservation_host: r,
+        }
+    }
+    pub fn program_version(&self) -> ProgramVersions {
+        self.program_version.clone()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HostsCount {
+    pub wild_host: usize,
+    pub reservation_host: usize,
+}
+
+impl Display for HostsCount {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "w: {} r: {}", self.wild_host, self.reservation_host)
+    }
+}
+
+#[derive(Debug)]
+pub struct GGRunReport {
+    pub hosts_count: HostsCount,
+    pub wild_loner: usize,
+    pub reservation_loner: usize,
+    pub high_wild: usize,
+    pub high_reservation: usize,
+    pub tied: usize,
+}
+
+impl Display for GGRunReport {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut s = String::new();
+        s.push_str(&format!("- {} runs ended with wild individuals the lone type remaining", self.wild_loner));
+        s.push_str(&format!("- {} runs ended with reservation individuals the lone type remaining", self.reservation_loner));
+        s.push_str(&format!("- {} runs ended with wild individuals a higher quantity than reservation individuals", self.high_wild));
+        s.push_str(&format!("- {} runs ended with reservation individuals a higher quantity than wild individuals", self.high_reservation));
+        s.push_str(&format!("- {} runs ended with the quantities of the two types tied", self.tied));
+        write!(f, "{}", s)
     }
 }
