@@ -44,7 +44,7 @@ impl Default for Host {
         Host {
             host_type: HostTypes::Reservation,
             number_set: Default::default(),
-            alive: true
+            alive: true,
         }
     }
 }
@@ -55,7 +55,7 @@ impl Display for Host {
         for number in &self.number_set {
             s += &format!("{}", number);
         }
-        write!(f, "({}) {}:{}", self.alive, self.host_type, s)
+        write!(f, "({}) {}:{}", if self.alive { "alive" } else { "dead" }, self.host_type, s)
     }
 }
 
@@ -83,10 +83,9 @@ impl Host {
         self.alive
     }
 
-    pub fn set_host_type(&mut self, host_type: HostTypes) -> &mut Self{
+    pub fn set_host_type(&mut self, host_type: HostTypes) -> &mut Self {
         self.host_type = host_type;
         self
-
     }
 
     pub fn set_number_set(&mut self, number_set: Array1<usize>) -> &mut Self {

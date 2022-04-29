@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::fs::{create_dir_all, File, OpenOptions};
+use std::io::Write;
+use std::num::ParseIntError;
 
-use ndarray::{Array, Axis, Ix, Ix1, Ix2, Ix3};
+use ndarray::{Array, Array3, Axis, Ix, Ix1, Ix2, Ix3};
 use ndarray_rand::RandomExt;
 use rand::distributions::Uniform;
 use rayon::prelude::IntoParallelRefIterator;
@@ -17,28 +20,25 @@ pub enum ProgramVersions {
     Four,
 }
 
+impl From<String> for ProgramVersions {
+    fn from(s: String) -> Self {
+        let i = s.parse::<i32>();
+        let v = match i {
+            Ok(v) => v,
+            Err(_) => 1
+        };
+        if v == 4 { ProgramVersions::Four } else if v == 3 { ProgramVersions::Three } else if v == 2 { ProgramVersions::Two } else { ProgramVersions::One }
+    }
+}
+
 pub struct Simulation {
     pref: SimulationPref,
     simulation_state: SimulationState,
     generations: Vec<SimulationState>,
-    program_version: ProgramVersions
+    program_version: ProgramVersions,
+    gg: usize,
 }
 
-impl Simulation {
-    pub(crate) fn update_host_match_score(&mut self, host_match_score: HashMap<usize, usize>) {
-        self.simulation_state.host_match_score = host_match_score;
-    }
-}
-
-impl Simulation {
-    pub(crate) fn species_match_score(&self) -> &HashMap<usize, usize> {
-        &self.simulation_state.species_match_score
-    }
-
-    pub(crate) fn update_species_match_score(&mut self, species_match_score: HashMap<usize, usize>) {
-        self.simulation_state.species_match_score = species_match_score;
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct SimulationState {
@@ -80,12 +80,24 @@ impl SimulationState {
     }
 }
 
-pub fn new_simulation(pref: SimulationPref) -> Simulation {
+pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg: usize) -> Simulation {
     let hosts = create_random_hosts(&pref);
     let parasites: Array<usize, Ix3> = Array::random(
         (pref.d(), pref.e(), pref.g()),
         Uniform::new(0, pref.f()),
     );
+    // create log folder
+    if gg < 3 {
+        let g_folder = format!("report/sim_{}", gg);
+        create_dir_all(&g_folder);
+        let mut f = File::create(format!("{}/hosts", g_folder)).expect("Unable to create file");
+        f.write_all(&format!("{:#?}", hosts).to_string().as_bytes()).expect("Unable to write data");
+        let mut f = File::create(format!("{}/parasites", g_folder)).expect("Unable to create file");
+        f.write_all(print_parasites(&parasites).as_bytes()).expect("Unable to write data");
+        for ff in 0..3 {
+            create_dir_all(format!("{}/{}", g_folder, ff));
+        }
+    }
     Simulation {
         pref: pref.clone(),
         simulation_state: SimulationState {
@@ -94,11 +106,40 @@ pub fn new_simulation(pref: SimulationPref) -> Simulation {
             ..SimulationState::default()
         },
         generations: vec![],
-        program_version: ProgramVersions::One
+        program_version,
+        gg,
     }
 }
 
 impl Simulation {
+    pub(crate) fn update_host_match_score(&mut self, host_match_score: HashMap<usize, usize>) {
+        self.simulation_state.host_match_score = host_match_score;
+    }
+
+    pub(crate) fn species_match_score(&self) -> &HashMap<usize, usize> {
+        &self.simulation_state.species_match_score
+    }
+
+    pub(crate) fn update_species_match_score(&mut self, species_match_score: HashMap<usize, usize>) {
+        self.simulation_state.species_match_score = species_match_score;
+    }
+
+    pub fn pv(&self, file_name: &str, content: &str, append: bool) {
+        if self.gg() < 3 && self.current_generation() < 3 {
+            let f_folder = format!("report/sim_{}/{}", self.gg(), self.current_generation());
+            let file_path = format!("{}/{}.txt", f_folder, file_name);
+            let mut f = if append {
+                OpenOptions::new()
+                    .append(true)
+                    .create(true) // Optionally create the file if it doesn't already exist
+                    .open(file_path)
+                    .expect("Unable to open file")
+            } else {
+                File::create(file_path).expect("Unable to create file")
+            };
+            f.write_all(content.as_bytes()).expect("unable to write data");
+        }
+    }
     /**
     update parasite with parent parasite's number set
      */
@@ -109,8 +150,6 @@ impl Simulation {
             self.simulation_state.parasites[[species, parasite, v]] = parent_view[v];
         }
     }
-
-
 
     pub(crate) fn update_parasites_exposed_to(&mut self, parasites_exposed_to: HashMap<(usize, usize), usize>) {
         self.simulation_state.match_scores = parasites_exposed_to;
@@ -198,13 +237,15 @@ impl Simulation {
 
     pub fn next_generation(&mut self) {
         self.generations.push(self.simulation_state.clone());
+        let generation = self.simulation_state.current_generation + 1;
         self.simulation_state = SimulationState {
             hosts: self.simulation_state.hosts.to_owned(),
             parasites: self.simulation_state.parasites.to_owned(),
+            current_generation: generation,
             ..Default::default()
         };
-        self.simulation_state.current_generation += 1;
     }
+
     pub fn simulation_state(&self) -> &SimulationState {
         &self.simulation_state
     }
@@ -213,9 +254,8 @@ impl Simulation {
         self.simulation_state = simulation_state;
     }
 
-
     pub fn generate_report(&self) -> HostsCount {
-        let (_, r, w)= self.count_alive_hosts_from_generation(self.generations.last().unwrap());
+        let (_, r, w) = self.count_alive_hosts_from_generation(self.generations.last().unwrap());
         HostsCount {
             wild_host: w,
             reservation_host: r,
@@ -223,6 +263,10 @@ impl Simulation {
     }
     pub fn program_version(&self) -> ProgramVersions {
         self.program_version.clone()
+    }
+
+    pub fn gg(&self) -> usize {
+        self.gg
     }
 }
 
@@ -258,4 +302,18 @@ impl Display for GGRunReport {
         s.push_str(&format!("- {} runs ended with the quantities of the two types tied", self.tied));
         write!(f, "{}", s)
     }
+}
+
+pub fn print_parasites(all_parasites: &Array3<usize>) -> String {
+    let mut _s = String::new();
+    let mut i = 0;
+    for parasite in all_parasites.rows() {
+        _s.push_str(&format!("{}, ", parasite.to_string()));
+        i += 1;
+        if i % 10 == 0 {
+            i = 0;
+            _s.push_str("\n")
+        }
+    }
+    format!("PARASITES:\n{}", _s)
 }

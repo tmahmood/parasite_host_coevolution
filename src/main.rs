@@ -1,20 +1,28 @@
 extern crate core;
-extern crate ndarray_parallel;
 extern crate rand;
 extern crate serde;
 extern crate serde_derive;
 extern crate serde_ini;
 
-use std::fs;
+use std::{fs, time};
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-use std::fs::{create_dir_all, OpenOptions};
+use std::env::args;
+use std::fmt::{Display, format, Formatter};
+use std::fs::{create_dir_all, File, OpenOptions, remove_dir_all, remove_file};
 use std::io::Write;
 use std::ops::Div;
 use std::path::Path;
 
 use futures::executor::block_on;
-use ndarray::{Array, Array1, Array3, ArrayBase, Axis, Ix, Ix1, Ix3, OwnedRepr};
+use log;
+use log::{info, LevelFilter, SetLoggerError};
+use log4rs::{Config, Handle};
+use log4rs::append::console::ConsoleAppender;
+use log4rs::append::file::FileAppender;
+use log4rs::append::rolling_file::RollingFileAppender;
+use log4rs::config::{Appender, Root};
+use log4rs::encode::pattern::PatternEncoder;
+use ndarray::{Array, Array1, Array3, ArrayBase, ArrayView1, Axis, Ix, Ix1, Ix3, OwnedRepr};
 use ndarray_rand::RandomExt;
 use rand::{Rng, thread_rng};
 use rand::distributions::{Uniform, WeightedIndex};
@@ -24,8 +32,9 @@ use rayon::prelude::*;
 use parasites::random_parasite;
 
 use crate::hosts::{Host, HostTypes};
-use crate::simulation::{HostsCount, new_simulation, ProgramVersions, Simulation};
+use crate::simulation::{HostsCount, new_simulation, print_parasites, ProgramVersions, Simulation};
 use crate::simulation_pref::SimulationPref;
+use crate::simulation_runner::SimulationRunner;
 
 // It's important to shuffle lists before the random processes. In the past when I've hired for
 // these sorts of programs, the biggest problem has been that individuals of one type were more
@@ -37,52 +46,20 @@ pub mod parasites;
 pub mod hosts;
 pub mod simulation;
 
+pub mod simulation_runner {
+    use crate::{Simulation, SimulationPref};
 
-async fn main_async() {
-    let pref: SimulationPref = serde_ini::from_str(&fs::read_to_string("params.conf").unwrap()).unwrap();
-    let mut result: Vec<HostsCount> = vec![];
-    (0..pref.gg()).into_par_iter().map(|gg| {
-        println!("simulation running: {}", gg);
-        let mut simulation = new_simulation(pref.clone());
-        let mut lines = vec![];
-        for ff in 0..pref.ff() {
-            expose_all_hosts_to_parasites(&mut simulation);
-            additional_exposure(&mut simulation);
-            if !should_continue(&mut simulation) {
-                simulation.next_generation();
-                break;
-            }
-            birth_hosts(&mut simulation);
-            parasite_truncation_and_birth(&mut simulation);
-            mutation(&mut simulation);
-            parasite_replacement(&mut simulation);
-            simulation.next_generation();
-            lines.push(simulation.generate_report());
-            if lines.len() == 3 {
-                let s = calculate_result(lines.clone(), pref.clone());
-                write_to_file(gg, ff, &s);
+    pub struct SimulationRunner {
+        pref: SimulationPref,
+    }
+
+    impl SimulationRunner {
+        pub fn new(pref: SimulationPref) -> SimulationRunner {
+            SimulationRunner {
+                pref
             }
         }
-        simulation.generate_report()
-    }).collect_into_vec(&mut result);
-    println!("{:#?}", result);
-    let s = calculate_result(result, pref.clone());
-    write_to_file(10000, 1000, &s);
-}
-
-fn write_to_file(gg: usize, ff: usize, content: &str) {
-    let k = gg / 100;
-    let p = format!("reports/{}", k);
-    let path = Path::new(&p);
-    if !std::path::Path::exists(path) {
-        std::fs::create_dir_all(path).unwrap();
     }
-    let mut f = OpenOptions::new()
-        .append(true)
-        .create(true) // Optionally create the file if it doesn't already exist
-        .open(format!("{}/{}_{}.txt", path.to_str().unwrap(), gg, ff))
-        .expect("Unable to open file");
-    f.write_all(content.as_bytes()).expect("Unable to write data");
 }
 
 fn calculate_result(result: Vec<HostsCount>, pref: SimulationPref) -> String {
@@ -135,6 +112,7 @@ fn calculate_result(result: Vec<HostsCount>, pref: SimulationPref) -> String {
     let confidence_interval_r_high_point = mean_wild + pref.z() * standard_error_r;
     let confidence_interval_r_low_point = mean_wild - pref.z() * standard_error_r;
 
+    _s.push_str("Confidence Interval:\nHigh Point (R), Low Point (R), High Point (W), High Point (R)\n");
     _s.push_str(&format!("{},{},{},{}\n", confidence_interval_r_high_point, confidence_interval_r_low_point, confidence_interval_w_high_point, confidence_interval_w_low_point));
     _s
 }
@@ -197,62 +175,6 @@ fn mutation(simulation: &mut Simulation) {
     }
 }
 
-/**
-All parasite individuals have a match score for a particular generation that is the number of
-matching digits it has with the host it matched with in the earlier step. For each parasite species,
-all parasite individuals with a match score that is higher than *BB%* of all parasite individuals in
-the same parasite species become eliminated. To replace these individuals and restore the number of
-parasite individuals in the species to the original quantity of *E*, the parasite individuals in that
-species that have not been eliminated have an equal likelihood of producing each new individual in
-the species, in a random process. A parasite is able to produce more than one birthed individual
-if it is chosen more than once during this random process. A parasite individual has the same
-*G*-digit series of numbers as its parent.
- */
-fn parasite_truncation_and_birth(simulation: &mut Simulation) {
-    let match_scores = simulation.simulation_state().match_scores().clone();
-    let mut frequency = HashMap::<usize, usize>::new();
-    let mut cumulative_frequency = Vec::with_capacity(simulation.pref().g() + 1);
-    let mut individuals_with_score = HashMap::<usize, Vec<(usize, usize)>>::new();
-    for k in 0..simulation.pref().g() + 1 {
-        cumulative_frequency.push(0);
-        frequency.insert(k, 0);
-        individuals_with_score.insert(k, Vec::new());
-    }
-    // calculate frequencies of each score
-    for ((s, p), v) in match_scores.iter() {
-        *frequency.entry(*v).or_insert(0) += 1;
-        individuals_with_score.get_mut(&v).unwrap().push((s.clone(), p.clone()));
-        cumulative_frequency[*v] += 1;
-    }
-    let mut percentiles = HashMap::<usize, f32>::new();
-    // calculate cumulative frequency of each match
-    let mut rng = thread_rng();
-    for i in 1..cumulative_frequency.len() {
-        cumulative_frequency[i] += cumulative_frequency[i - 1];
-        percentiles.insert(i, calculate_percentile(cumulative_frequency[i], *frequency.get(&i).unwrap(), match_scores.len()));
-        if percentiles.get(&i).unwrap() >= &simulation.pref().bb() {
-            let parasites = individuals_with_score.get(&i).unwrap();
-            let mut _s = String::new();
-            for (s, i) in parasites {
-                // get random existing parasite from the same species (s), excluding this parasite (i)
-                let parent_parasite_index = loop {
-                    let i1 = rng.gen_range(0..simulation.pref().e());
-                    if i1 != *i { break i1; }
-                };
-                let b = simulation.parasites().index_axis(Axis(0), *s);
-                let v = b.index_axis(Axis(0), *i);
-                _s.push_str(&format!("{: >2} {: >3}: {: >2} : ", s, i, v));
-                let v = b.index_axis(Axis(0), parent_parasite_index);
-                _s.push_str(&format!("{: >2} -> ", v));
-                simulation.update_parasites(*s, *i, parent_parasite_index);
-                let b = simulation.parasites().index_axis(Axis(0), *s);
-                let v = b.index_axis(Axis(0), *i);
-                _s.push_str(&format!("{: >2}\n", v));
-            }
-        }
-    }
-}
-
 #[inline]
 fn calculate_percentile(cf: usize, f: usize, total: usize) -> f32 {
     // cf, f, total
@@ -272,10 +194,79 @@ fn test_calculate_percentile() {
     );
 }
 
-fn main() {
-    block_on(main_async());
+fn config_logger(parallel_run: i32) -> Result<Handle, SetLoggerError> {
+    let logfile = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new("{l} - {m}\n")))
+        .build("report/output.log").unwrap();
+    let console = ConsoleAppender::builder()
+        .encoder(Box::new(PatternEncoder::new("{l} - {m}\n")))
+        .build();
+    let mut root_builder = Root::builder();
+    let mut config = Config::builder()
+        .appender(Appender::builder().build("logfile", Box::new(logfile)));
+    if parallel_run == 0 {
+        config = config.appender(Appender::builder().build("console", Box::new(console)));
+        root_builder = root_builder.appender("console");
+    }
+    let c = config.build(root_builder.appender("logfile").build(LevelFilter::Info));
+    log4rs::init_config(c.unwrap())
 }
 
+
+fn main() {
+    remove_dir_all("report");
+    let param_file = args().nth(1).unwrap_or(format!("params.conf"));
+    let program = ProgramVersions::from(args().nth(2).unwrap_or(format!("1")));
+    let parallel_run = args().nth(3).unwrap_or(format!("0"));
+    config_logger(
+        if parallel_run == "0" {
+            0
+        } else {
+            1
+        }
+    ).unwrap();
+    let pref: SimulationPref = serde_ini::from_str(&fs::read_to_string(param_file).unwrap()).unwrap();
+    let now = time::Instant::now();
+    let mut result: Vec<HostsCount> = vec![];
+    if parallel_run == "1" {
+        println!("Running parallel version, will log to file");
+        (0..pref.gg()).into_par_iter().map(|gg| {
+            info!("simulation running {}", gg);
+            run_generation_step(program.clone(), gg, pref.clone())
+        }).collect_into_vec(&mut result);
+    } else {
+        let mut result: Vec<HostsCount> = vec![];
+        info!("Running normal version");
+        result = (0..pref.gg()).into_iter().map(|gg| {
+            info!("simulation running {}", gg);
+            run_generation_step(program.clone(), gg, pref.clone())
+        }).collect();
+    }
+    println!("{:#?}", result);
+    info!("{}", calculate_result(result, pref.clone()));
+    info!("took {} secs", now.elapsed().as_secs())
+}
+
+fn run_generation_step(program: ProgramVersions, gg: usize, pref: SimulationPref) -> HostsCount {
+    info!("simulation running: {}", gg);
+    let mut simulation = new_simulation(pref.clone(), program, gg);
+    let mut lines = vec![];
+    for ff in 0..pref.ff() {
+        expose_all_hosts_to_parasites(&mut simulation);
+        additional_exposure(&mut simulation);
+        if !should_continue(&mut simulation) {
+            simulation.next_generation();
+            break;
+        }
+        birth_hosts(&mut simulation);
+        parasite_truncation_and_birth(&mut simulation);
+        mutation(&mut simulation);
+        parasite_replacement(&mut simulation);
+        simulation.next_generation();
+        lines.push(simulation.generate_report());
+    }
+    simulation.generate_report()
+}
 
 pub fn generate_individual(f: usize, len: usize) -> Array1<usize> {
     Array::random(len, Uniform::new(0, f))
@@ -307,17 +298,21 @@ impl Display for ParasiteSpeciesIndex {
 }
 
 pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
+    let file_name = "host_exposed_to";
     let mut parasites_exposed_to = HashMap::new();
     let mut species_match_score = HashMap::<usize, usize>::new();
     let mut host_match_score = HashMap::<usize, usize>::new();
+    // let mut host_parasite_score = HashMap::new();
+    simulation.pv(file_name, "Initial Exposure\n", true);
     let all_parasites = simulation.parasites().clone();
     let hosts = simulation.hosts().clone();
     for i in 0..simulation.pref().a() + simulation.pref().b() {
         let host = &hosts[i];
+        simulation.pv(file_name, &format!("             {}\n", &host.number_set()), true);
         let mut match_score_bellow_threshold = 0;
         for _ in 0..simulation.pref().h() {
             let mut p_idx = get_random_parasite(simulation, &parasites_exposed_to);
-            let match_score = find_match_score(&host, &all_parasites, &mut p_idx, simulation.pref(), simulation.program_version());
+            let match_score = find_match_score(&host, &all_parasites, &mut p_idx, simulation);
             parasites_exposed_to.insert((p_idx.species(), p_idx.parasite()), match_score);
             *species_match_score.entry(p_idx.species()).or_insert(0) += match_score;
             if match_score < simulation.pref().n() {
@@ -326,29 +321,34 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
             if match_score < simulation.pref().j() {
                 *host_match_score.entry(i).or_insert(0) += 1;
             }
+            //
+            let d = parasite_row(&all_parasites, p_idx.species(), p_idx.parasite_index);
+            let p_grid = print_matching_number_sets(
+                host.number_set().clone(),
+                d,
+                p_idx.species(),
+            );
+            simulation.pv(file_name, &format!("{: >3} : {: >3} -> {: >3}\n", p_idx.species(), match_score, p_grid), true);
+            //
         }
         if match_score_bellow_threshold >= simulation.pref().x() {
             simulation.kill_host(i);
+            simulation.pv("host_dying_initial_exposure", &format!("{}\n", &simulation.hosts()[i].to_string()), true);
         }
     }
+    let (t, r, w) = simulation.count_dead_hosts();
+    simulation.pv("host_dying_additional_exposure", &format!("{} R({}) W({})", t, r, w), true);
     simulation.update_parasites_exposed_to(parasites_exposed_to);
     simulation.update_species_match_score(species_match_score);
     simulation.update_host_match_score(host_match_score);
 }
 
-fn get_random_parasite(simulation: &mut Simulation, parasites_exposed_to: &HashMap<(usize, usize), usize>) -> ParasiteSpeciesIndex {
-    loop {
-        let p_idx = random_parasite(simulation.pref());
-        let ky = (p_idx.species(), p_idx.parasite());
-        if parasites_exposed_to.contains_key(&ky) { continue; }
-        break p_idx;
-    }
-}
-
 pub fn additional_exposure(simulation: &mut Simulation) {
+    let file_name = "host_additional_exposure";
     let mut species_match_score = simulation.species_match_score().clone();
     let mut host_match_score = simulation.simulation_state().host_match_score().clone();
     let (total_dead_hosts, _, _) = simulation.count_dead_hosts();
+    simulation.pv(file_name, "Additional Exposure\n", true);
     let (_, alive_reservation_hosts, _) = simulation.count_alive_hosts();
     // secondary exposure
     let secondary_allowed = (simulation.pref().a() + simulation.pref().b()) as f32 * simulation.pref().m();
@@ -357,12 +357,13 @@ pub fn additional_exposure(simulation: &mut Simulation) {
     }
     let all_parasites = simulation.parasites().clone();
     let no_of_additional_host = (alive_reservation_hosts as f32 * simulation.pref().aa()).ceil() as usize;
+    simulation.pv(file_name, &format!("Additional Exposure candidate {}\n", no_of_additional_host), true);
     let mut rng = thread_rng();
     let mut hosts_to_try = 0;
     let mut parasites_exposed_to = simulation.parasites_exposed_to();
     while hosts_to_try < no_of_additional_host {
         let index: usize = rng.gen_range(0..simulation.pref().a() + simulation.pref().b());
-        // let host = &simulation.hosts()[index];
+        simulation.pv(file_name, &format!("             {}\n", &simulation.hosts()[index].number_set()), true);
         // only reservation hosts
         if simulation.hosts()[index].host_type() == HostTypes::Wild { continue; }
         // skip dead hosts
@@ -372,47 +373,63 @@ pub fn additional_exposure(simulation: &mut Simulation) {
         let mut match_score_bellow_threshold = 0;
         for _ in 0..simulation.pref().i() {
             let mut p_idx = get_random_parasite(simulation, &parasites_exposed_to);
-            let match_score = find_match_score(&simulation.hosts()[index], &all_parasites, &mut p_idx, simulation.pref(), simulation.program_version());
+            let match_score = find_match_score(&simulation.hosts()[index], &all_parasites, &mut p_idx, &simulation);
+            // update simulation state
             parasites_exposed_to.insert((p_idx.species(), p_idx.parasite()), match_score);
             *species_match_score.entry(p_idx.species()).or_insert(0) += match_score;
+            //
             if match_score < simulation.pref().dd() {
                 match_score_bellow_threshold += 1;
             }
             if match_score < simulation.pref().j() {
                 *host_match_score.entry(index).or_insert(0) += 1;
             }
+            //
+            let d = parasite_row(&all_parasites, p_idx.species(), p_idx.parasite_index);
+            let p_grid = print_matching_number_sets(
+                simulation.hosts()[index].number_set().clone(),
+                d,
+                p_idx.species(),
+            );
+            simulation.pv(file_name, &format!("{: >3} : {: >3} -> {: >3}\n", p_idx.species(), match_score, p_grid), true);
+            //
         }
         if match_score_bellow_threshold >= simulation.pref().cc() {
             simulation.kill_host(index);
+            simulation.pv("host_dying_additional_exposure", &format!("{}\n", &simulation.hosts()[index].to_string()), true);
         }
     }
+    let (t, r, w) = simulation.count_dead_hosts();
+    simulation.pv("host_dying_additional_exposure", &format!("{} R({}) W({})", t, r, w), true);
     simulation.update_parasites_exposed_to(parasites_exposed_to);
     simulation.update_species_match_score(species_match_score);
     simulation.update_host_match_score(host_match_score);
 }
 
 pub fn birth_hosts(simulation: &mut Simulation) {
+    let file_name = "birth_hosts";
     let (dist, choices) = match simulation.program_version() {
         ProgramVersions::One => birth_generation_version_1(simulation),
         ProgramVersions::Two => birth_generation_version_2(simulation),
         ProgramVersions::Three => birth_generation_version_1(simulation),
         ProgramVersions::Four => birth_generation_version_1(simulation),
     };
-    let mut rng = rand::thread_rng();
+    let mut rng = thread_rng();
     loop {
         // pick up parent host
-        let pick_reservation_host = choices[dist.sample(&mut rng)];
+        let random_host_index = choices[dist.sample(&mut rng)];
         let parent_index = loop {
             let p = rng.gen_range(0..simulation.hosts().len());
             let p_host = &simulation.hosts()[p];
-            if p_host.host_type() == HostTypes::Reservation && pick_reservation_host == 1 && p_host.alive() {
+            if p_host.host_type() == HostTypes::Reservation && random_host_index == 1 && p_host.alive() {
                 break p;
             }
-            if pick_reservation_host == 0 && p_host.host_type() == HostTypes::Wild && p_host.alive() {
+            if random_host_index == 0 && p_host.host_type() == HostTypes::Wild && p_host.alive() {
                 break p;
             }
         };
         let parent_host = simulation.hosts()[parent_index].clone();
+        simulation.pv(file_name, &format!("{}\n", parent_host), true);
         let mut index = None;
         for (ii, host) in simulation.hosts().iter().enumerate() {
             if !host.alive() {
@@ -430,17 +447,6 @@ pub fn birth_hosts(simulation: &mut Simulation) {
     }
 }
 
-fn find_sum_of_match_score(host_match_score: &HashMap<usize, usize>, hosts: &Array<Host, Ix1>, host_type: HostTypes) -> f32 {
-    host_match_score.into_par_iter().fold(|| 0f32, |mut acc, v| {
-        if hosts[*v.0].host_type() == host_type {
-            acc += *v.1 as f32;
-            acc
-        } else {
-            acc
-        }
-    }).sum::<f32>()
-}
-
 pub fn birth_generation_version_1(simulation: &mut Simulation) -> (WeightedIndex<f32>, Vec<usize>) {
     let (_, no_of_dead_reservation_host, no_of_dead_wild_host) = simulation.count_dead_hosts();
     let (_, no_of_reservation_host_alive, no_of_wild_host_alive) = simulation.count_alive_hosts();
@@ -454,6 +460,7 @@ pub fn birth_generation_version_1(simulation: &mut Simulation) -> (WeightedIndex
         simulation.pref().p(),
     );
     let choices = vec![0, 1];
+    simulation.pv("birth_hosts", &format!("Birth V1: {}, {}, {:?}\n", chance_reservation, chance_wild, choices), true);
     (WeightedIndex::new(vec![chance_wild, chance_reservation]).unwrap(), choices)
 }
 
@@ -468,11 +475,10 @@ pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex
         .map(|v| v.0)
         .collect();
     let chances: Vec<f32> = choices.iter().map(|v| {
+        let qi = *host_match_score.get(&v).unwrap() as f32;
         get_chances_v2(
             simulation.hosts()[*v].host_type(),
-            *host_match_score.get(&v).unwrap() as f32,
-            qr,
-            qw,
+            qi, qr, qw,
             simulation.pref().r() as f32,
             simulation.pref().s() as f32,
             no_of_dead_wild_host as f32,
@@ -482,6 +488,7 @@ pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex
             simulation.pref().p(),
         )
     }).collect();
+    simulation.pv("birth_hosts", &format!("Birth V1: {:?}, {:?}\n", chances, choices), true);
     (WeightedIndex::new(chances).unwrap(), choices)
 }
 
@@ -502,24 +509,113 @@ pub fn get_chances_v2(host_type: HostTypes, qi: f32, qr: f32, qw: f32, r: f32, s
     }
 }
 
-pub fn find_match_score(host: &Host, all_parasites: &Array3<usize>, p_idx: &mut ParasiteSpeciesIndex, pref: SimulationPref, version: ProgramVersions) -> usize {
+fn parasite_truncation_and_birth(simulation: &mut Simulation) {
+    let mut _s = String::new();
+    let match_scores = simulation.simulation_state().match_scores().clone();
+    let mut frequency = HashMap::<usize, usize>::new();
+    let mut cumulative_frequency = Vec::with_capacity(simulation.pref().g() + 1);
+    let mut individuals_with_score = HashMap::<usize, Vec<(usize, usize)>>::new();
+    // prepare data store for frequency, cumulative freq.
+    for k in 0..simulation.pref().g() + 1 {
+        cumulative_frequency.push(0);
+        frequency.insert(k, 0);
+        individuals_with_score.insert(k, Vec::new());
+    }
+    // calculate frequencies of each score
+    for ((s, p), v) in match_scores.iter() {
+        *frequency.entry(*v).or_insert(0) += 1;
+        individuals_with_score.get_mut(&v).unwrap().push((s.clone(), p.clone()));
+        cumulative_frequency[*v] += 1;
+    }
+    let mut percentiles = HashMap::<usize, f32>::new();
+    let mut rng = thread_rng();
+    //
+    _s.push_str(&format!("{: >2} {: >2} {: >3}\n", "species", "parent index", "parent number set"));
+    //
+    for i in 1..cumulative_frequency.len() {
+        cumulative_frequency[i] += cumulative_frequency[i - 1];
+        // percentile rank parasite based on highest match scores
+        percentiles.insert(i, calculate_percentile(cumulative_frequency[i], *frequency.get(&i).unwrap(), match_scores.len()));
+        //
+        if percentiles.get(&i).unwrap() >= &simulation.pref().bb() {
+            // get all the parasites that were used
+            let parasites = individuals_with_score.get(&i).unwrap();
+            for (s, i) in parasites {
+                // get random existing parasite from the same species (s), excluding this parasite (i)
+                let parent_parasite_index = loop {
+                    let i1 = rng.gen_range(0..simulation.pref().e());
+                    if i1 != *i { break i1; }
+                };
+                // only for print
+                let b = simulation.parasites().index_axis(Axis(0), *s);
+                let v = b.index_axis(Axis(0), parent_parasite_index);
+                _s.push_str(&format!("{: >2} {: >5} : {: >2}\n", s, i, v));
+                // only for print
+                simulation.update_parasites(*s, *i, parent_parasite_index);
+            }
+        }
+    }
+    simulation.pv(
+        "parasite_birth",
+        &format!("PARASITE_BIRTH\n{}", _s),
+        true,
+    );
+}
+
+pub fn print_matching_number_sets(n1: Array1<usize>, n2: Array1<usize>, species: usize) -> String {
+    let mut s = String::new();
+    for _ in 0..species {
+        s.push_str("   ");
+    }
+    s.push_str(&format!("{}", n2));
+    s
+}
+
+pub fn find_match_score(host: &Host, all_parasites: &Array3<usize>, p_idx: &mut ParasiteSpeciesIndex, simulation: &Simulation) -> usize {
     let mut match_count = 0;
     let number_set = host.number_set();
     let index = p_idx.species();
-    for ii in index..index + pref.g() {
-        match version {
+    for ii in p_idx.species()..p_idx.species() + simulation.pref().g() {
+        match simulation.program_version() {
             ProgramVersions::One | ProgramVersions::Two => {
-                if number_set[ii] == all_parasites[[index, ii - index, 0]] {
+                if number_set[ii] == all_parasites[[p_idx.species(), p_idx.parasite_index, ii - index]] {
                     match_count += 1
                 }
             }
             ProgramVersions::Three | ProgramVersions::Four => {
-                if number_set[ii] != all_parasites[[index, ii - index, 0]] {
+                if number_set[ii] != all_parasites[[p_idx.species(), p_idx.parasite_index, ii - index]] {
                     match_count += 1
                 }
             }
         }
     }
     p_idx.match_count = match_count;
+    let pr = parasite_row(all_parasites, p_idx.species(), p_idx.parasite());
     match_count
+}
+
+fn parasite_row(all_parasites: &Array3<usize>, species: usize, parasite: usize) -> Array1<usize> {
+    //
+    let d = all_parasites.index_axis(Axis(0), species).to_owned();
+    d.index_axis(Axis(0), parasite).to_owned()
+}
+
+fn get_random_parasite(simulation: &mut Simulation, parasites_exposed_to: &HashMap<(usize, usize), usize>) -> ParasiteSpeciesIndex {
+    loop {
+        let p_idx = random_parasite(simulation.pref());
+        let ky = (p_idx.species(), p_idx.parasite());
+        if parasites_exposed_to.contains_key(&ky) { continue; }
+        break p_idx;
+    }
+}
+
+fn find_sum_of_match_score(host_match_score: &HashMap<usize, usize>, hosts: &Array<Host, Ix1>, host_type: HostTypes) -> f32 {
+    host_match_score.into_par_iter().fold(|| 0f32, |mut acc, v| {
+        if hosts[*v.0].host_type() == host_type {
+            acc += *v.1 as f32;
+            acc
+        } else {
+            acc
+        }
+    }).sum::<f32>()
 }

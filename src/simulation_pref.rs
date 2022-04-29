@@ -1,5 +1,8 @@
-use crate::serde_derive::Deserialize;
+use std::fs::File;
+
 use serde_ini::{Deserializer, Parser};
+
+use crate::serde_derive::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct SimulationPref {
