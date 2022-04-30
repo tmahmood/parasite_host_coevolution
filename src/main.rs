@@ -229,22 +229,25 @@ fn main() {
     let now = time::Instant::now();
     let mut result: Vec<HostsCount> = vec![];
     if parallel_run == "1" {
-        println!("Running parallel version, will log to file");
+        println!("Running parallel version, will log to file. {}", program);
         (0..pref.gg()).into_par_iter().map(|gg| {
             info!("simulation running {}", gg);
+            print!("#");
             run_generation_step(program.clone(), gg, pref.clone())
         }).collect_into_vec(&mut result);
     } else {
         let mut result: Vec<HostsCount> = vec![];
-        info!("Running normal version");
+        info!("Running normal version. {}", program);
         result = (0..pref.gg()).into_iter().map(|gg| {
             info!("simulation running {}", gg);
+            print!("#");
             run_generation_step(program.clone(), gg, pref.clone())
         }).collect();
     }
-    println!("{:#?}", result);
-    info!("{}", calculate_result(result, pref.clone()));
-    info!("took {} secs", now.elapsed().as_secs())
+    let r = calculate_result(result.clone(), pref.clone());
+    println!("{:#?}\n{}", result, r);
+    info!("{}", r);
+    println!("took {} secs", now.elapsed().as_secs())
 }
 
 fn run_generation_step(program: ProgramVersions, gg: usize, pref: SimulationPref) -> HostsCount {
@@ -315,11 +318,9 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
             let match_score = find_match_score(&host, &all_parasites, &mut p_idx, simulation);
             parasites_exposed_to.insert((p_idx.species(), p_idx.parasite()), match_score);
             *species_match_score.entry(p_idx.species()).or_insert(0) += match_score;
+            *host_match_score.entry(i).or_insert(0) += 1;
             if match_score < simulation.pref().n() {
                 match_score_bellow_threshold += 1;
-            }
-            if match_score < simulation.pref().j() {
-                *host_match_score.entry(i).or_insert(0) += 1;
             }
             //
             let d = parasite_row(&all_parasites, p_idx.species(), p_idx.parasite_index);
@@ -337,7 +338,7 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
         }
     }
     let (t, r, w) = simulation.count_dead_hosts();
-    simulation.pv("host_dying_additional_exposure", &format!("{} R({}) W({})", t, r, w), true);
+    simulation.pv("host_dying_initial_exposure", &format!("{} R({}) W({})", t, r, w), true);
     simulation.update_parasites_exposed_to(parasites_exposed_to);
     simulation.update_species_match_score(species_match_score);
     simulation.update_host_match_score(host_match_score);
@@ -377,12 +378,10 @@ pub fn additional_exposure(simulation: &mut Simulation) {
             // update simulation state
             parasites_exposed_to.insert((p_idx.species(), p_idx.parasite()), match_score);
             *species_match_score.entry(p_idx.species()).or_insert(0) += match_score;
+            *host_match_score.entry(index).or_insert(0) += 1;
             //
             if match_score < simulation.pref().dd() {
                 match_score_bellow_threshold += 1;
-            }
-            if match_score < simulation.pref().j() {
-                *host_match_score.entry(index).or_insert(0) += 1;
             }
             //
             let d = parasite_row(&all_parasites, p_idx.species(), p_idx.parasite_index);
@@ -407,7 +406,7 @@ pub fn additional_exposure(simulation: &mut Simulation) {
 }
 
 pub fn birth_hosts(simulation: &mut Simulation) {
-    let file_name = "birth_hosts";
+    let file_name = "hosts_birth";
     let (dist, choices) = match simulation.program_version() {
         ProgramVersions::One => birth_generation_version_1(simulation),
         ProgramVersions::Two => birth_generation_version_2(simulation),
@@ -418,16 +417,21 @@ pub fn birth_hosts(simulation: &mut Simulation) {
     loop {
         // pick up parent host
         let random_host_index = choices[dist.sample(&mut rng)];
-        let parent_index = loop {
-            let p = rng.gen_range(0..simulation.hosts().len());
-            let p_host = &simulation.hosts()[p];
-            if p_host.host_type() == HostTypes::Reservation && random_host_index == 1 && p_host.alive() {
-                break p;
+        let parent_index = match simulation.program_version() {
+            ProgramVersions::One => {
+                random_host_selection_v1(&simulation, random_host_index)
             }
-            if random_host_index == 0 && p_host.host_type() == HostTypes::Wild && p_host.alive() {
-                break p;
+            ProgramVersions::Two => {
+                rng.gen_range(0..simulation.hosts().len())
+            }
+            ProgramVersions::Three => {
+                random_host_selection_v1(&simulation, random_host_index)
+            }
+            ProgramVersions::Four => {
+                rng.gen_range(0..simulation.hosts().len())
             }
         };
+
         let parent_host = simulation.hosts()[parent_index].clone();
         simulation.pv(file_name, &format!("{}\n", parent_host), true);
         let mut index = None;
@@ -447,6 +451,21 @@ pub fn birth_hosts(simulation: &mut Simulation) {
     }
 }
 
+fn random_host_selection_v1(simulation: &Simulation, random_host_index: usize) -> usize {
+
+    let mut rng = thread_rng();
+    loop {
+        let p = rng.gen_range(0..simulation.hosts().len());
+        let p_host = &simulation.hosts()[p];
+        if p_host.host_type() == HostTypes::Reservation && random_host_index == 1 && p_host.alive() {
+            break p;
+        }
+        if random_host_index == 0 && p_host.host_type() == HostTypes::Wild && p_host.alive() {
+            break p;
+        }
+    }
+}
+
 pub fn birth_generation_version_1(simulation: &mut Simulation) -> (WeightedIndex<f32>, Vec<usize>) {
     let (_, no_of_dead_reservation_host, no_of_dead_wild_host) = simulation.count_dead_hosts();
     let (_, no_of_reservation_host_alive, no_of_wild_host_alive) = simulation.count_alive_hosts();
@@ -460,25 +479,24 @@ pub fn birth_generation_version_1(simulation: &mut Simulation) -> (WeightedIndex
         simulation.pref().p(),
     );
     let choices = vec![0, 1];
-    simulation.pv("birth_hosts", &format!("Birth V1: {}, {}, {:?}\n", chance_reservation, chance_wild, choices), true);
+    simulation.pv("hosts_birth", &format!("Birth V1: {}, {}, {:?}\n", chance_reservation, chance_wild, choices), true);
     (WeightedIndex::new(vec![chance_wild, chance_reservation]).unwrap(), choices)
 }
 
 pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex<f32>, Vec<usize>) {
     let (_, no_of_dead_reservation_host, no_of_dead_wild_host) = simulation.count_dead_hosts();
-    let (_, no_of_reservation_host_alive, no_of_wild_host_alive) = simulation.count_alive_hosts();
-    let host_match_score = simulation.simulation_state().host_match_score();
-    let qr: f32 = find_sum_of_match_score(host_match_score, simulation.hosts(), HostTypes::Reservation);
-    let qw: f32 = find_sum_of_match_score(host_match_score, simulation.hosts(), HostTypes::Wild);
+    let host_match_score = simulation.simulation_state().host_match_score().clone();
+    let qr: f32 = find_sum_of_match_score(&host_match_score, simulation.hosts(), HostTypes::Reservation);
+    let qw: f32 = find_sum_of_match_score(&host_match_score, simulation.hosts(), HostTypes::Wild);
     let choices: Vec<usize> = simulation.hosts().iter().enumerate()
         .filter(|v| v.1.alive())
         .map(|v| v.0)
         .collect();
     let chances: Vec<f32> = choices.iter().map(|v| {
-        let qi = *host_match_score.get(&v).unwrap() as f32;
+        let qi = *host_match_score.get(&v).unwrap();
         get_chances_v2(
             simulation.hosts()[*v].host_type(),
-            qi, qr, qw,
+            qi as f32, qr, qw,
             simulation.pref().r() as f32,
             simulation.pref().s() as f32,
             no_of_dead_wild_host as f32,
@@ -488,7 +506,7 @@ pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex
             simulation.pref().p(),
         )
     }).collect();
-    simulation.pv("birth_hosts", &format!("Birth V1: {:?}, {:?}\n", chances, choices), true);
+    simulation.pv("hosts_birth", &format!("Birth V1: {:#?}, {:#?}\n", chances, choices), true);
     (WeightedIndex::new(chances).unwrap(), choices)
 }
 

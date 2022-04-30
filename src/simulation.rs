@@ -20,6 +20,18 @@ pub enum ProgramVersions {
     Four,
 }
 
+impl Display for ProgramVersions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            ProgramVersions::One => "Version 1",
+            ProgramVersions::Two => "Version 2",
+            ProgramVersions::Three => "Version 3",
+            ProgramVersions::Four => "Version 4",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 impl From<String> for ProgramVersions {
     fn from(s: String) -> Self {
         let i = s.parse::<i32>();
