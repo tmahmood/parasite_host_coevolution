@@ -12,13 +12,15 @@ use rayon::prelude::IntoParallelRefIterator;
 use crate::{HostTypes, SimulationPref};
 use crate::hosts::{create_random_hosts, Host};
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub enum ProgramVersions {
     One,
     Two,
     Three,
     Four,
 }
+
+pub type SpeciesParasite = (usize, usize);
 
 impl Display for ProgramVersions {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -52,9 +54,12 @@ pub struct Simulation {
 }
 
 
+
 #[derive(Clone, Debug)]
 pub struct SimulationState {
-    match_scores: HashMap<(usize, usize), usize>,
+    /** parasite scores, key is (Species, Parasite) */
+    match_scores: HashMap<SpeciesParasite, usize>,
+    /** */
     species_match_score: HashMap<usize, usize>,
     current_generation: usize,
     hosts: Array<Host, Ix1>,
@@ -83,6 +88,7 @@ impl SimulationState {
         self.match_scores.insert(k, v)
     }
 
+    /** parasite scores, key is (Species, Parasite) => Match score */
     pub fn match_scores(&self) -> &HashMap<(usize, usize), usize> {
         &self.match_scores
     }
@@ -131,7 +137,7 @@ impl Simulation {
     pub(crate) fn species_match_score(&self) -> &HashMap<usize, usize> {
         &self.simulation_state.species_match_score
     }
-
+    /** Updates species total match score (species index) => match score) */
     pub(crate) fn update_species_match_score(&mut self, species_match_score: HashMap<usize, usize>) {
         self.simulation_state.species_match_score = species_match_score;
     }
@@ -163,10 +169,12 @@ impl Simulation {
         }
     }
 
-    pub(crate) fn update_parasites_exposed_to(&mut self, parasites_exposed_to: HashMap<(usize, usize), usize>) {
+    /** update parasites scores, key is (Species, Parasite) => Match score */
+    pub(crate) fn update_parasites_exposed_to(&mut self, parasites_exposed_to: HashMap<SpeciesParasite, usize>) {
         self.simulation_state.match_scores = parasites_exposed_to;
     }
 
+    /** get a clone of parasites scores, key is (Species, Parasite) => Match score */
     pub(crate) fn parasites_exposed_to(&mut self) -> HashMap<(usize, usize), usize> {
         self.simulation_state.match_scores.clone()
     }
@@ -319,13 +327,21 @@ impl Display for GGRunReport {
 pub fn print_parasites(all_parasites: &Array3<usize>) -> String {
     let mut _s = String::new();
     let mut i = 0;
-    for parasite in all_parasites.rows() {
-        _s.push_str(&format!("{}, ", parasite.to_string()));
-        i += 1;
-        if i % 10 == 0 {
-            i = 0;
-            _s.push_str("\n")
+    let l1 = all_parasites.len_of(Axis(0));
+    let l2 = all_parasites.len_of(Axis(1));
+    for ii in 0..l1 {
+        _s.push_str(&format!("Species: {}\n", ii));
+        for jj in 0..l2 {
+            let v = all_parasites.index_axis(Axis(0), ii);
+            _s.push_str(&format!("({}, {}) {}\n", ii, jj, v.index_axis(Axis(0), jj)));
         }
+        _s.push_str("\n");
+        // _s.push_str(&format!("{}, ", parasite.to_string()));
+        // i += 1;
+        // if i % 10 == 0 {
+        //     i = 0;
+        //     _s.push_str("\n")
+        // }
     }
     format!("PARASITES:\n{}", _s)
 }

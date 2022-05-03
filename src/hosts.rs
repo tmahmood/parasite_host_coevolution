@@ -19,8 +19,8 @@ pub enum HostTypes {
 impl Display for HostTypes {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let r = match self {
-            HostTypes::Reservation => "R",
-            HostTypes::Wild => "W"
+            HostTypes::Reservation => "Reservation",
+            HostTypes::Wild => "Wild"
         };
         write!(f, "{}", r)
     }
@@ -51,11 +51,7 @@ impl Default for Host {
 
 impl Display for Host {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut s = String::new();
-        for number in &self.number_set {
-            s += &format!("{}", number);
-        }
-        write!(f, "({}) {}:{}", if self.alive { "alive" } else { "dead" }, self.host_type, s)
+        write!(f, "({}) {: >12}: {}", if self.alive { "alive" } else { "dead" }, self.host_type.to_string(), self.number_set)
     }
 }
 

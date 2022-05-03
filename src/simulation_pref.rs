@@ -4,7 +4,7 @@ use serde_ini::{Deserializer, Parser};
 
 use crate::serde_derive::Deserialize;
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone, Copy)]
 pub struct SimulationPref {
     /** number of reservation hosts to start each simulation run */
     a: usize,
@@ -199,7 +199,10 @@ impl SimulationPref {
         self.cc
     }
 
-    /** on the conditions that it is after the Lth generation and if less than an M fraction of host individuals (a total of reservation and wild host individuals) have been killed if a reservation host individual has a match score (including this additional exposure) with at least CC parasite individuals that is lower than DD, then that host individual is considered killed */
+    /** on the conditions that it is after the Lth generation and if less than an M fraction of host individuals
+    (a total of reservation and wild host individuals) have been killed if a reservation host
+    individual has a match score (including this additional exposure) with at least CC
+    parasite individuals that is lower than DD, then that host individual is considered killed */
     pub fn dd(&self) -> usize {
         self.dd
     }
