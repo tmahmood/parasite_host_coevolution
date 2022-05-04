@@ -53,6 +53,8 @@ pub struct Simulation {
     gg: usize,
 }
 
+impl Simulation {
+}
 
 
 #[derive(Clone, Debug)]
@@ -65,6 +67,7 @@ pub struct SimulationState {
     hosts: Array<Host, Ix1>,
     parasites: Array<usize, Ix3>,
     host_match_score: HashMap<usize, usize>,
+    species_left: HashMap<usize, Vec<usize>>,
 }
 
 impl Default for SimulationState {
@@ -76,6 +79,7 @@ impl Default for SimulationState {
             hosts: Default::default(),
             parasites: Default::default(),
             host_match_score: Default::default(),
+            species_left: Default::default(),
         }
     }
 }
@@ -96,6 +100,7 @@ impl SimulationState {
     pub fn host_match_score(&self) -> &HashMap<usize, usize> {
         &self.host_match_score
     }
+
 }
 
 pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg: usize) -> Simulation {
@@ -130,6 +135,18 @@ pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg
 }
 
 impl Simulation {
+    pub fn update_species_not_exposed_to(&mut self, host: usize, list_of_species: Vec<usize>) {
+        self.simulation_state.species_left.insert(host, list_of_species);
+    }
+
+    pub(crate) fn species_left(&self) -> HashMap<usize, Vec<usize>> {
+        self.simulation_state.species_left.clone()
+    }
+
+    pub(crate) fn species_left_mut(&mut self) -> &mut HashMap<usize, Vec<usize>> {
+        &mut self.simulation_state.species_left
+    }
+
     pub(crate) fn update_host_match_score(&mut self, host_match_score: HashMap<usize, usize>) {
         self.simulation_state.host_match_score = host_match_score;
     }

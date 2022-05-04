@@ -343,6 +343,7 @@ impl Display for ParasiteSpeciesIndex {
 }
 
 pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
+    let mut rng = thread_rng();
     let file_name = "host_exposed_to";
     let mut parasites_exposed_to = HashMap::new();
     let mut species_match_score = HashMap::<usize, usize>::new();
@@ -351,12 +352,23 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
     simulation.pv(file_name, "Initial Exposure\n", true);
     let all_parasites = simulation.parasites().clone();
     let hosts = simulation.hosts().clone();
+
+    let mut species_possible = (0..simulation.pref().d()).collect::<Vec<usize>>();
+    let mut parasites_possible = (0..simulation.pref().e()).collect::<Vec<usize>>();
     for i in 0..simulation.pref().a() + simulation.pref().b() {
         let host = &hosts[i];
         simulation.pv(file_name, &format!("{: <3} {:12}{}\n(species, parasite): match count -> code, \n", i, &host.host_type().to_string(), &host.number_set()), true);
         let mut match_score_bellow_threshold = 0;
+        let mut species = species_possible.clone();
+        let mut parasites = parasites_possible.clone();
+        species.shuffle(&mut rng);
+        parasites.shuffle(&mut rng);
         for _ in 0..simulation.pref().h() {
-            let mut p_idx = get_random_parasite(simulation, &parasites_exposed_to);
+            let mut p_idx = ParasiteSpeciesIndex {
+                species_index: species.pop().unwrap(),
+                parasite_index: parasites.pop().unwrap(),
+                match_count: 0
+            };
             let match_score = find_match_score(&host, &all_parasites, &mut p_idx, simulation);
             parasites_exposed_to.insert((p_idx.species(), p_idx.parasite()), match_score);
             *species_match_score.entry(p_idx.species()).or_insert(0) += match_score;
@@ -374,6 +386,7 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
             simulation.pv(file_name, &format!("{: >3},{: >3} : {: >2} -> {: >3}\n", p_idx.species(), p_idx.parasite(), match_score, p_grid), true);
             //
         }
+        simulation.update_species_not_exposed_to(i, species);
         simulation.pv(file_name, &format!("-------------------------\n"), true);
         if match_score_bellow_threshold >= simulation.pref().x() {
             simulation.kill_host(i);
@@ -409,8 +422,13 @@ pub fn additional_exposure(simulation: &mut Simulation) {
     let mut rng = thread_rng();
     let mut hosts_to_try = 0;
     let mut parasites_exposed_to = simulation.parasites_exposed_to();
+    let mut species_par_host = simulation.species_left();
+    let mut parasites = (0..simulation.pref().e()).collect::<Vec<usize>>();
+    let mut tried = vec![];
     while hosts_to_try < no_of_additional_host {
         let index: usize = rng.gen_range(0..simulation.pref().a() + simulation.pref().b());
+        if tried.contains(&index) { continue }
+        tried.push(index);
         simulation.pv(file_name,
                       &format!("host: {: >3}{: >4}      {}\nMATCHED PARASITES\n",
                                index, &simulation.hosts()[index].host_type(),
@@ -423,7 +441,12 @@ pub fn additional_exposure(simulation: &mut Simulation) {
         // expose to parasite
         let mut match_score_bellow_threshold = 0;
         for _ in 0..simulation.pref().i() {
-            let mut p_idx = get_random_parasite(simulation, &parasites_exposed_to);
+            let mut p_idx = ParasiteSpeciesIndex {
+                species_index: species_par_host.get_mut(&index).unwrap().pop().unwrap(),
+                parasite_index: parasites.pop().unwrap(),
+                match_count: 0
+            };
+            // let mut p_idx = get_random_parasite(simulation, &parasites_exposed_to);
             let match_score = find_match_score(&simulation.hosts()[index], &all_parasites, &mut p_idx, &simulation);
             // update simulation state
             parasites_exposed_to.insert((p_idx.species(), p_idx.parasite()), match_score);
@@ -447,6 +470,7 @@ pub fn additional_exposure(simulation: &mut Simulation) {
             simulation.kill_host(index);
             simulation.pv("host_dying_additional_exposure", &format!("{}\n", &simulation.hosts()[index].to_string()), true);
         }
+        simulation.update_species_not_exposed_to(index, species_par_host.get(&index).unwrap().clone());
     }
     let (t, r, w) = simulation.count_dead_hosts();
     simulation.pv("host_dying_additional_exposure", &format!("{} R({}) W({})", t, r, w), true);
@@ -642,7 +666,7 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
 
 pub fn print_matching_number_sets(n1: Array1<usize>, n2: Array1<usize>, species: usize) -> String {
     let mut s = String::new();
-    for _ in 0..species {
+    for _ in 0..species * n2.len() {
         s.push_str("   ");
     }
     s.push_str(&format!("{}", n2));
@@ -652,23 +676,24 @@ pub fn print_matching_number_sets(n1: Array1<usize>, n2: Array1<usize>, species:
 pub fn find_match_score(host: &Host, all_parasites: &Array3<usize>, p_idx: &mut ParasiteSpeciesIndex, simulation: &Simulation) -> usize {
     let mut match_count = 0;
     let number_set = host.number_set();
-    let index = p_idx.species();
-    for ii in p_idx.species()..p_idx.species() + simulation.pref().g() {
+    let start_at = p_idx.species() * simulation.pref().g();
+    let index = p_idx.species() * simulation.pref().g();
+
+    for ii in start_at..start_at + simulation.pref().g() {
         match simulation.program_version() {
             ProgramVersions::One | ProgramVersions::Two => {
-                if number_set[ii] == all_parasites[[p_idx.species(), p_idx.parasite_index, ii - index]] {
+                if number_set[ii] == all_parasites[[p_idx.species(), p_idx.parasite_index, ii - start_at]] {
                     match_count += 1
                 }
             }
             ProgramVersions::Three | ProgramVersions::Four => {
-                if number_set[ii] != all_parasites[[p_idx.species(), p_idx.parasite_index, ii - index]] {
+                if number_set[ii] != all_parasites[[p_idx.species(), p_idx.parasite_index, ii - start_at]] {
                     match_count += 1
                 }
             }
         }
     }
     p_idx.match_count = match_count;
-    let pr = parasite_row(all_parasites, p_idx.species(), p_idx.parasite());
     match_count
 }
 
@@ -679,6 +704,7 @@ fn parasite_row(all_parasites: &Array3<usize>, species: usize, parasite: usize) 
 }
 
 fn get_random_parasite(simulation: &mut Simulation, parasites_exposed_to: &HashMap<(usize, usize), usize>) -> ParasiteSpeciesIndex {
+
     loop {
         let p_idx = random_parasite(simulation.pref());
         let ky = (p_idx.species(), p_idx.parasite());
