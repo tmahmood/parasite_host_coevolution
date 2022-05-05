@@ -54,6 +54,16 @@ pub struct Simulation {
 }
 
 impl Simulation {
+    pub(crate) fn parasites_possible(&self) -> Vec<Vec<usize>> {
+        self.simulation_state.parasites_possible.clone()
+    }
+
+    pub(crate) fn set_parasites_possible(&mut self, parasites_possible: Vec<Vec<usize>>) {
+        self.simulation_state.parasites_possible = parasites_possible;
+    }
+}
+
+impl Simulation {
 }
 
 
@@ -68,6 +78,7 @@ pub struct SimulationState {
     parasites: Array<usize, Ix3>,
     host_match_score: HashMap<usize, usize>,
     species_left: HashMap<usize, Vec<usize>>,
+    parasites_possible: Vec<Vec<usize>>
 }
 
 impl Default for SimulationState {
@@ -80,6 +91,7 @@ impl Default for SimulationState {
             parasites: Default::default(),
             host_match_score: Default::default(),
             species_left: Default::default(),
+            parasites_possible: vec![]
         }
     }
 }
@@ -135,8 +147,8 @@ pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg
 }
 
 impl Simulation {
-    pub fn update_species_not_exposed_to(&mut self, host: usize, list_of_species: Vec<usize>) {
-        self.simulation_state.species_left.insert(host, list_of_species);
+    pub fn set_species_left(&mut self, species_left: HashMap<usize, Vec<usize>>) {
+        self.simulation_state.species_left = species_left;
     }
 
     pub(crate) fn species_left(&self) -> HashMap<usize, Vec<usize>> {
@@ -147,16 +159,24 @@ impl Simulation {
         &mut self.simulation_state.species_left
     }
 
-    pub(crate) fn update_host_match_score(&mut self, host_match_score: HashMap<usize, usize>) {
+    pub(crate) fn set_host_match_score(&mut self, host_match_score: HashMap<usize, usize>) {
         self.simulation_state.host_match_score = host_match_score;
+    }
+
+    pub(crate) fn update_host_match_score(&mut self, host_index: usize, inc: usize) {
+        *self.simulation_state.host_match_score.entry(host_index).or_insert(0) += inc;
     }
 
     pub(crate) fn species_match_score(&self) -> &HashMap<usize, usize> {
         &self.simulation_state.species_match_score
     }
     /** Updates species total match score (species index) => match score) */
-    pub(crate) fn update_species_match_score(&mut self, species_match_score: HashMap<usize, usize>) {
+    pub(crate) fn set_species_match_score(&mut self, species_match_score: HashMap<usize, usize>) {
         self.simulation_state.species_match_score = species_match_score;
+    }
+
+    pub fn update_species_match_score(&mut self, species_index: usize, match_score: usize) {
+        *self.simulation_state.species_match_score.entry(species_index).or_insert(0) += match_score;
     }
 
     pub fn pv(&self, file_name: &str, content: &str, append: bool) {
@@ -186,9 +206,14 @@ impl Simulation {
         }
     }
 
-    /** update parasites scores, key is (Species, Parasite) => Match score */
-    pub(crate) fn update_parasites_exposed_to(&mut self, parasites_exposed_to: HashMap<SpeciesParasite, usize>) {
+    /** set parasites scores, key is (Species, Parasite) => Match score */
+    pub(crate) fn set_parasites_exposed_to(&mut self, parasites_exposed_to: HashMap<SpeciesParasite, usize>) {
         self.simulation_state.match_scores = parasites_exposed_to;
+    }
+
+    /** update parasites scores, key is (Species, Parasite) => Match score */
+    pub(crate) fn update_parasites_exposed_to(&mut self, key: SpeciesParasite, parasite: usize) {
+        self.simulation_state.match_scores.insert(key, parasite);
     }
 
     /** get a clone of parasites scores, key is (Species, Parasite) => Match score */

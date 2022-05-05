@@ -238,14 +238,12 @@ fn config_logger(parallel_run: i32) -> Result<Handle, SetLoggerError> {
 
 
 fn main() {
-
     let multi_progress_bar = MultiProgress::new();
     let sty = ProgressStyle::with_template(
         "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7} {msg}",
     )
         .unwrap()
         .progress_chars("##-");
-
 
 
     remove_dir_all("report");
@@ -345,34 +343,45 @@ impl Display for ParasiteSpeciesIndex {
 pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
     let mut rng = thread_rng();
     let file_name = "host_exposed_to";
-    let mut parasites_exposed_to = HashMap::new();
-    let mut species_match_score = HashMap::<usize, usize>::new();
-    let mut host_match_score = HashMap::<usize, usize>::new();
-    // let mut host_parasite_score = HashMap::new();
     simulation.pv(file_name, "Initial Exposure\n", true);
     let all_parasites = simulation.parasites().clone();
     let hosts = simulation.hosts().clone();
-
-    let mut species_possible = (0..simulation.pref().d()).collect::<Vec<usize>>();
-    let mut parasites_possible = (0..simulation.pref().e()).collect::<Vec<usize>>();
-    for i in 0..simulation.pref().a() + simulation.pref().b() {
-        let host = &hosts[i];
-        simulation.pv(file_name, &format!("{: <3} {:12}{}\n(species, parasite): match count -> code, \n", i, &host.host_type().to_string(), &host.number_set()), true);
+    // we are calculating all the random species for each hosts before hand, that way we don't
+    // have to calculate it in the loop and most likely it will be optimized, we remove the species
+    // that is used, that way we don't have to check for used parasite individual
+    let _species_possible = (0..simulation.pref().d()).collect::<Vec<usize>>();
+    let mut species_possible = HashMap::new();
+    for i in 0..hosts.len() {
+        let mut k = _species_possible.clone();
+        k.shuffle(&mut rng);
+        species_possible.insert(i, k);
+    }
+    // same with parasites
+    let _parasites_possible = (0..simulation.pref().e()).collect::<Vec<usize>>();
+    let mut parasites_possible = vec![];
+    for _ in 0..simulation.pref().d() {
+        let mut k = _parasites_possible.clone();
+        k.shuffle(&mut rng);
+        parasites_possible.push(k);
+    }
+    // parasites_exposed_to =
+    for host_index in 0..simulation.pref().a() + simulation.pref().b() {
+        let host = &hosts[host_index];
+        simulation.pv(file_name, &format!("{: <3} {:12}{}\n(species, parasite): match count -> code, \n", host_index, &host.host_type().to_string(), &host.number_set()), true);
         let mut match_score_bellow_threshold = 0;
-        let mut species = species_possible.clone();
-        let mut parasites = parasites_possible.clone();
-        species.shuffle(&mut rng);
-        parasites.shuffle(&mut rng);
+        let mut species = species_possible.get_mut(&host_index).unwrap();
         for _ in 0..simulation.pref().h() {
+            let species_index = species.pop().unwrap();
+            let parasite_index = parasites_possible[species_index].pop().unwrap();
             let mut p_idx = ParasiteSpeciesIndex {
-                species_index: species.pop().unwrap(),
-                parasite_index: parasites.pop().unwrap(),
-                match_count: 0
+                species_index,
+                parasite_index,
+                match_count: 0,
             };
             let match_score = find_match_score(&host, &all_parasites, &mut p_idx, simulation);
-            parasites_exposed_to.insert((p_idx.species(), p_idx.parasite()), match_score);
-            *species_match_score.entry(p_idx.species()).or_insert(0) += match_score;
-            *host_match_score.entry(i).or_insert(0) += 1;
+            simulation.update_parasites_exposed_to((p_idx.species(), p_idx.parasite()), match_score);
+            simulation.update_species_match_score(p_idx.species(), match_score);
+            simulation.update_host_match_score(host_index, 1);
             if match_score < simulation.pref().n() {
                 match_score_bellow_threshold += 1;
             }
@@ -386,30 +395,26 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
             simulation.pv(file_name, &format!("{: >3},{: >3} : {: >2} -> {: >3}\n", p_idx.species(), p_idx.parasite(), match_score, p_grid), true);
             //
         }
-        simulation.update_species_not_exposed_to(i, species);
         simulation.pv(file_name, &format!("-------------------------\n"), true);
         if match_score_bellow_threshold >= simulation.pref().x() {
-            simulation.kill_host(i);
-            simulation.pv("host_dying_initial_exposure", &format!("{}\n", &simulation.hosts()[i].to_string()), true);
+            simulation.kill_host(host_index);
+            simulation.pv("host_dying_initial_exposure", &format!("{}\n", &simulation.hosts()[host_index].to_string()), true);
         }
     }
     let (t, r, w) = simulation.count_dead_hosts();
     simulation.pv("host_dying_initial_exposure", &format!("{} R({}) W({})", t, r, w), true);
-    simulation.update_parasites_exposed_to(parasites_exposed_to);
-    simulation.update_species_match_score(species_match_score);
-    simulation.update_host_match_score(host_match_score);
+    simulation.set_species_left( species_possible);
+    simulation.set_parasites_possible(parasites_possible);
 }
 
 pub fn additional_exposure(simulation: &mut Simulation) {
     let file_name = "host_additional_exposure";
-    let mut species_match_score = simulation.species_match_score().clone();
-    let mut host_match_score = simulation.simulation_state().host_match_score().clone();
     let (total_dead_hosts, _, _) = simulation.count_dead_hosts();
     simulation.pv(file_name, "Additional Exposure\n", true);
     let (_, alive_reservation_hosts, _) = simulation.count_alive_hosts();
     // secondary exposure
     let secondary_allowed = (simulation.pref().a() + simulation.pref().b()) as f32 * simulation.pref().m();
-    if simulation.current_generation() <= simulation.pref().l()  {
+    if simulation.current_generation() <= simulation.pref().l() {
         return;
     }
     if total_dead_hosts > secondary_allowed as usize {
@@ -421,62 +426,66 @@ pub fn additional_exposure(simulation: &mut Simulation) {
     simulation.pv(file_name, &format!("Additional Exposure candidate {}\n", no_of_additional_host), true);
     let mut rng = thread_rng();
     let mut hosts_to_try = 0;
-    let mut parasites_exposed_to = simulation.parasites_exposed_to();
     let mut species_par_host = simulation.species_left();
-    let mut parasites = (0..simulation.pref().e()).collect::<Vec<usize>>();
-    let mut tried = vec![];
+    let mut parasites_possible = simulation.parasites_possible();
+    let mut tried = HashMap::new();
     while hosts_to_try < no_of_additional_host {
-        let index: usize = rng.gen_range(0..simulation.pref().a() + simulation.pref().b());
-        if tried.contains(&index) { continue }
-        tried.push(index);
-        simulation.pv(file_name,
-                      &format!("host: {: >3}{: >4}      {}\nMATCHED PARASITES\n",
-                               index, &simulation.hosts()[index].host_type(),
-                               &simulation.hosts()[index].number_set()), true);
+        let host_index: usize = rng.gen_range(0..simulation.pref().a() + simulation.pref().b());
+        if tried.contains_key(&host_index) { continue; }
+        tried.insert(host_index, 0);
+        let host = simulation.hosts()[host_index].clone();
         // only reservation hosts
-        if simulation.hosts()[index].host_type() == HostTypes::Wild { continue; }
+        if host.host_type() == HostTypes::Wild { continue; }
         // skip dead hosts
-        if !simulation.hosts()[index].alive() { continue; }
+        if !host.alive() { continue; }
+        simulation.pv(file_name, &format!("{: <3} {:12}{}\n(species, parasite): match count -> code, \n", host_index, &host.host_type().to_string(), &host.number_set()), true);
         hosts_to_try += 1;
         // expose to parasite
         let mut match_score_bellow_threshold = 0;
         for _ in 0..simulation.pref().i() {
+            let species_index = species_par_host.get_mut(&host_index).unwrap().pop().unwrap();
+            let parasite_index = parasites_possible[species_index].pop().unwrap();
             let mut p_idx = ParasiteSpeciesIndex {
-                species_index: species_par_host.get_mut(&index).unwrap().pop().unwrap(),
-                parasite_index: parasites.pop().unwrap(),
-                match_count: 0
+                species_index, parasite_index,
+                match_count: 0,
             };
-            // let mut p_idx = get_random_parasite(simulation, &parasites_exposed_to);
-            let match_score = find_match_score(&simulation.hosts()[index], &all_parasites, &mut p_idx, &simulation);
+            let match_score = find_match_score(&host, &all_parasites, &mut p_idx, &simulation);
             // update simulation state
-            parasites_exposed_to.insert((p_idx.species(), p_idx.parasite()), match_score);
-            *species_match_score.entry(p_idx.species()).or_insert(0) += match_score;
-            *host_match_score.entry(index).or_insert(0) += 1;
-            //
+            simulation.update_parasites_exposed_to((p_idx.species(), p_idx.parasite()), match_score);
+            simulation.update_species_match_score(p_idx.species(), match_score);
+            simulation.update_host_match_score(host_index, 1);
             if match_score < simulation.pref().dd() {
                 match_score_bellow_threshold += 1;
             }
             //
             let d = parasite_row(&all_parasites, p_idx.species(), p_idx.parasite_index);
             let p_grid = print_matching_number_sets(
-                simulation.hosts()[index].number_set().clone(),
+                host.number_set().clone(),
                 d,
                 p_idx.species(),
             );
             simulation.pv(file_name, &format!("{: >3},{: >3} : {: >2} -> {: >3}\n", p_idx.species(), p_idx.parasite(), match_score, p_grid), true);
             //
         }
+        simulation.pv(file_name, &format!("-------------------------\n"), true);
         if match_score_bellow_threshold >= simulation.pref().cc() {
-            simulation.kill_host(index);
-            simulation.pv("host_dying_additional_exposure", &format!("{}\n", &simulation.hosts()[index].to_string()), true);
+            simulation.kill_host(host_index);
+            simulation.pv("host_dying_additional_exposure", &format!("{}\n", &host.to_string()), true);
         }
-        simulation.update_species_not_exposed_to(index, species_par_host.get(&index).unwrap().clone());
     }
     let (t, r, w) = simulation.count_dead_hosts();
     simulation.pv("host_dying_additional_exposure", &format!("{} R({}) W({})", t, r, w), true);
-    simulation.update_parasites_exposed_to(parasites_exposed_to);
-    simulation.update_species_match_score(species_match_score);
-    simulation.update_host_match_score(host_match_score);
+}
+
+fn random_parasite_index(simulation: &&mut Simulation, species_index: usize, parasites_exposed_to: &HashMap<(usize, usize), usize>) -> usize {
+    let mut rng = thread_rng();
+    loop {
+        let l = rng.gen_range(0..simulation.pref().e());
+        if parasites_exposed_to.contains_key(&(species_index, l)) {
+            continue
+        }
+        break l
+    }
 }
 
 pub fn birth_hosts(simulation: &mut Simulation) {
@@ -677,7 +686,6 @@ pub fn find_match_score(host: &Host, all_parasites: &Array3<usize>, p_idx: &mut 
     let mut match_count = 0;
     let number_set = host.number_set();
     let start_at = p_idx.species() * simulation.pref().g();
-    let index = p_idx.species() * simulation.pref().g();
 
     for ii in start_at..start_at + simulation.pref().g() {
         match simulation.program_version() {
@@ -704,7 +712,6 @@ fn parasite_row(all_parasites: &Array3<usize>, species: usize, parasite: usize) 
 }
 
 fn get_random_parasite(simulation: &mut Simulation, parasites_exposed_to: &HashMap<(usize, usize), usize>) -> ParasiteSpeciesIndex {
-
     loop {
         let p_idx = random_parasite(simulation.pref());
         let ky = (p_idx.species(), p_idx.parasite());
