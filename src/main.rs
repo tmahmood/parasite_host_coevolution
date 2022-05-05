@@ -477,17 +477,6 @@ pub fn additional_exposure(simulation: &mut Simulation) {
     simulation.pv("host_dying_additional_exposure", &format!("{} R({}) W({})", t, r, w), true);
 }
 
-fn random_parasite_index(simulation: &&mut Simulation, species_index: usize, parasites_exposed_to: &HashMap<(usize, usize), usize>) -> usize {
-    let mut rng = thread_rng();
-    loop {
-        let l = rng.gen_range(0..simulation.pref().e());
-        if parasites_exposed_to.contains_key(&(species_index, l)) {
-            continue
-        }
-        break l
-    }
-}
-
 pub fn birth_hosts(simulation: &mut Simulation) {
     let file_name = "hosts_birth";
     let (dist, choices) = match simulation.program_version() {
@@ -505,13 +494,14 @@ pub fn birth_hosts(simulation: &mut Simulation) {
                 random_host_selection_v1(&simulation, random_host_index)
             }
             ProgramVersions::Two => {
-                rng.gen_range(0..simulation.hosts().len())
+                // rng.gen_range(0..simulation.hosts().len())
+                choices[dist.sample(&mut rng)]
             }
             ProgramVersions::Three => {
                 random_host_selection_v1(&simulation, random_host_index)
             }
             ProgramVersions::Four => {
-                rng.gen_range(0..simulation.hosts().len())
+                choices[dist.sample(&mut rng)]
             }
         };
 
@@ -709,15 +699,6 @@ fn parasite_row(all_parasites: &Array3<usize>, species: usize, parasite: usize) 
     //
     let d = all_parasites.index_axis(Axis(0), species).to_owned();
     d.index_axis(Axis(0), parasite).to_owned()
-}
-
-fn get_random_parasite(simulation: &mut Simulation, parasites_exposed_to: &HashMap<(usize, usize), usize>) -> ParasiteSpeciesIndex {
-    loop {
-        let p_idx = random_parasite(simulation.pref());
-        let ky = (p_idx.species(), p_idx.parasite());
-        if parasites_exposed_to.contains_key(&ky) { continue; }
-        break p_idx;
-    }
 }
 
 fn find_sum_of_match_score(host_match_score: &HashMap<usize, usize>, hosts: &Array<Host, Ix1>, host_type: HostTypes) -> f32 {
