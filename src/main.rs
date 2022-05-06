@@ -5,6 +5,7 @@ extern crate serde_derive;
 extern crate serde_ini;
 
 use std::{fs, time};
+use std::cmp::max;
 use std::collections::HashMap;
 use std::env::args;
 use std::fmt::{Display, format, Formatter};
@@ -132,58 +133,6 @@ fn calculate_result(result: Vec<HostsCount>, pref: SimulationPref) -> String {
 fn should_continue(simulation: &mut Simulation) -> bool {
     let (t, r, w) = simulation.count_alive_hosts();
     !(r == 0 || w == 0)
-}
-
-fn parasite_replacement(simulation: &mut Simulation) {
-    let mut replaced = 0;
-    let to_be_replaced = simulation.pref().q();
-    // find the max value
-    let species_match_score = *simulation.species_match_score().iter().max_by(|a, b| a.1.cmp(&b.1)).map(|(k, v)| v).unwrap();
-    let mut max_keys: Vec<usize> = simulation.species_match_score().iter().filter(|v| *v.1 == species_match_score).map(|v| *v.0).collect();
-    let i = generate_individual(simulation.pref().f(), simulation.pref().g());
-    while replaced < to_be_replaced && max_keys.len() > 0 {
-        let ky = max_keys.pop().unwrap();
-        let mut species = simulation.parasites_mut().index_axis_mut(Axis(0), ky);
-        for (ii, iv) in i.iter().enumerate() {
-            for mut row in species.rows_mut() {
-                row[ii] = *iv;
-            }
-        }
-        replaced += 1;
-    }
-}
-
-fn mutation(simulation: &mut Simulation) {
-    let c = simulation.pref().c();
-    let f = simulation.pref().f();
-    let g = simulation.pref().g();
-    let weights: Vec<f32> = (0..simulation.pref().f()).map(|_| simulation.pref().ee()).collect();
-    let dist = WeightedIndex::new(&weights).unwrap();
-    let choices = [0, 1];
-    let mut rng = rand::thread_rng();
-    for host in simulation.hosts_mut() {
-        let mut m = host.number_set().clone();
-        let mut changes = 0;
-        for cc in 0..c {
-            let k = choices[dist.sample(&mut rng)];
-            if k == 1 {
-                changes += 1;
-                m[cc] = rng.gen_range(0..f);
-            }
-        }
-        host.set_number_set(m);
-    }
-    let weights: Vec<f32> = (0..simulation.pref().f()).map(|_| simulation.pref().k()).collect();
-    let dist = WeightedIndex::new(&weights).unwrap();
-    for mut parasite in simulation.parasites_mut().rows_mut() {
-        let old = parasite.to_owned();
-        for cc in 0..g {
-            let k = choices[dist.sample(&mut rng)];
-            if k == 1 {
-                parasite[cc] = rng.gen_range(0..f);
-            }
-        }
-    }
 }
 
 #[inline]
@@ -611,13 +560,7 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
         individuals_with_score.get_mut(&match_score).unwrap().push((species.clone(), parasites.clone()));
         cumulative_frequency[*match_score] += 1;
     });
-    // for ((species, parasites), match_score) in match_scores.iter() {
-    //     *frequency.entry(*match_score).or_insert(0) += 1;
-    //     // group parasites by score
-    //     individuals_with_score.get_mut(&match_score).unwrap().push((species.clone(), parasites.clone()));
-    //     // update cumulative frequency
-    //     cumulative_frequency[*match_score] += 1;
-    // }
+    //
     let mut rng = thread_rng();
     //
     _s.push_str(&format!("{: >6} {: >12} {: >12}\n", "parasite", "killed", "new parent"));
@@ -706,3 +649,80 @@ fn find_sum_of_match_score(host_match_score: &HashMap<usize, usize>, hosts: &Arr
         }
     }).sum::<f32>()
 }
+
+fn mutation(simulation: &mut Simulation) {
+    let c = simulation.pref().c();
+    let f = simulation.pref().f();
+    let g = simulation.pref().g();
+    let weights: Vec<f32> = (0..simulation.pref().f()).map(|_| simulation.pref().ee()).collect();
+    let dist = WeightedIndex::new(&weights).unwrap();
+    let choices = [0, 1];
+    let mut rng = rand::thread_rng();
+    for host in simulation.hosts_mut() {
+        let mut m = host.number_set().clone();
+        let mut changes = 0;
+        for cc in 0..c {
+            let k = choices[dist.sample(&mut rng)];
+            if k == 1 {
+                changes += 1;
+                m[cc] = rng.gen_range(0..f);
+            }
+        }
+        host.set_number_set(m);
+    }
+    let weights: Vec<f32> = (0..simulation.pref().f()).map(|_| simulation.pref().k()).collect();
+    let dist = WeightedIndex::new(&weights).unwrap();
+    for mut parasite in simulation.parasites_mut().rows_mut() {
+        let old = parasite.to_owned();
+        for cc in 0..g {
+            let k = choices[dist.sample(&mut rng)];
+            if k == 1 {
+                parasite[cc] = rng.gen_range(0..f);
+            }
+        }
+    }
+    simulation.pv("mutated_parasites",
+                  &format!("{}",
+                           print_parasites(simulation.parasites())),
+                  true);
+}
+
+fn parasite_replacement(simulation: &mut Simulation) {
+    // For each parasite species during a generation, a total match score is calculated which
+    // is the sum of all match scores for individuals in that parasite species during that
+    // generation, including those match scores resulting from the extra exposure above.
+    // The Q species with the highest total match scores are eliminated (that is, all the E
+    // individuals from each of the Q species with the highest total match scores are eliminated).
+    // In their place come Q new species. For each new species, a set of G numbers is
+    // randomly generated, and these numbers can be either of F possible values.  For each
+    // individual in the new species, that individual’s set of G numbers is the same as this
+    // set that was just generated for that species.  (This sameness of the set of G numbers
+    // for each individual in a parasite species is only temporary.  Differences in the values
+    // between each individual in a parasite species will probably be caused in the Mutation
+    // step of each generation.)
+    let mut replaced = 0;
+    let to_be_replaced = simulation.pref().q();
+    // find the max value
+    let species_match_score = *simulation.species_match_score().iter()
+        .max_by(|a, b| a.1.cmp(&b.1))
+        .map(|(k, v)| v)
+        .unwrap();
+    let mut max_keys: Vec<usize> = simulation.species_match_score().iter()
+        .filter(|v| *v.1 == species_match_score)
+        .map(|v| *v.0)
+        .collect();
+    let i = generate_individual(simulation.pref().f(), simulation.pref().g());
+    while replaced < to_be_replaced && max_keys.len() > 0 {
+        let ky = max_keys.pop().unwrap();
+        let mut species = simulation.parasites_mut().index_axis_mut(Axis(0), ky);
+        for (ii, iv) in i.iter().enumerate() {
+            for mut row in species.rows_mut() {
+                row[ii] = *iv;
+            }
+            //println!("{}", species.index_axis(Axis(0), ky));
+        }
+        replaced += 1;
+
+    }
+}
+

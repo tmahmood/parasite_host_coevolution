@@ -9,7 +9,7 @@ use ndarray_rand::RandomExt;
 use rand::distributions::Uniform;
 use rayon::prelude::IntoParallelRefIterator;
 
-use crate::{HostTypes, SimulationPref};
+use crate::{generate_individual, HostTypes, SimulationPref};
 use crate::hosts::{create_random_hosts, Host};
 
 #[derive(Copy, Clone)]
@@ -115,12 +115,20 @@ impl SimulationState {
 
 }
 
+pub fn create_random_parasites(pref: &SimulationPref) -> Array3<usize> {
+    let mut v = vec![];
+    for _ in 0..pref.d() {
+        v.push(generate_individual(pref.f(), pref.g()));
+    }
+    Array::from_shape_fn([pref.d(), pref.e(), pref.g()], |(i, j, k)| {
+        v[i][k]
+    })
+}
+
 pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg: usize) -> Simulation {
     let hosts = create_random_hosts(&pref);
-    let parasites: Array<usize, Ix3> = Array::random(
-        (pref.d(), pref.e(), pref.g()),
-        Uniform::new(0, pref.f()),
-    );
+    //
+    let parasites= create_random_parasites(&pref);
     // create log folder
     if gg < 3 {
         let g_folder = format!("report/sim_{}", gg);
@@ -298,6 +306,8 @@ impl Simulation {
     }
 
     pub fn next_generation(&mut self) {
+        self.pv("hosts_end",&format!("{:#?}", self.hosts()), true);
+        self.pv("parasites_end",&format!("{}", print_parasites(self.parasites())), true);
         self.generations.push(self.simulation_state.clone());
         let generation = self.simulation_state.current_generation + 1;
         self.simulation_state = SimulationState {
