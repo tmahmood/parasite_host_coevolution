@@ -254,7 +254,7 @@ impl Simulation {
     pub fn count_alive_hosts_from_generation(&self, simulation_state: &SimulationState) -> (usize, usize, usize) {
         let mut count_hosts_alive_reservation = 0;
         let mut count_hosts_alive_wild = 0;
-        for host in simulation_state.hosts.iter() {
+        simulation_state.hosts.for_each(|host| {
             if host.alive() {
                 if host.host_type() == HostTypes::Reservation {
                     count_hosts_alive_reservation += 1;
@@ -262,14 +262,14 @@ impl Simulation {
                     count_hosts_alive_wild += 1;
                 }
             }
-        }
+        });
         (count_hosts_alive_reservation + count_hosts_alive_wild, count_hosts_alive_reservation, count_hosts_alive_wild)
     }
 
     pub fn count_dead_hosts(&mut self) -> (usize, usize, usize) {
         let mut count_hosts_dead_reservation = 0;
         let mut count_hosts_dead_wild = 0;
-        for host in self.simulation_state.hosts.iter() {
+        self.simulation_state.hosts.for_each(|host| {
             if !host.alive() {
                 if host.host_type() == HostTypes::Reservation {
                     count_hosts_dead_reservation += 1;
@@ -277,7 +277,7 @@ impl Simulation {
                     count_hosts_dead_wild += 1;
                 }
             }
-        }
+        });
         (count_hosts_dead_wild + count_hosts_dead_reservation, count_hosts_dead_reservation, count_hosts_dead_wild)
     }
 
@@ -378,12 +378,6 @@ pub fn print_parasites(all_parasites: &Array3<usize>) -> String {
             _s.push_str(&format!("({}, {}) {}\n", ii, jj, v.index_axis(Axis(0), jj)));
         }
         _s.push_str("\n");
-        // _s.push_str(&format!("{}, ", parasite.to_string()));
-        // i += 1;
-        // if i % 10 == 0 {
-        //     i = 0;
-        //     _s.push_str("\n")
-        // }
     }
     format!("PARASITES:\n{}", _s)
 }

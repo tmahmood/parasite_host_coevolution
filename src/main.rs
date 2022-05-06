@@ -13,7 +13,6 @@ use std::io::Write;
 use std::ops::Div;
 use std::path::Path;
 
-use futures::executor::block_on;
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressBar, ProgressIterator, ProgressStyle};
 use log;
 use log::{info, LevelFilter, SetLoggerError};
@@ -364,7 +363,6 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
         k.shuffle(&mut rng);
         parasites_possible.push(k);
     }
-    // parasites_exposed_to =
     for host_index in 0..simulation.pref().a() + simulation.pref().b() {
         let host = &hosts[host_index];
         simulation.pv(file_name, &format!("{: <3} {:12}{}\n(species, parasite): match count -> code, \n", host_index, &host.host_type().to_string(), &host.number_set()), true);
@@ -403,7 +401,7 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
     }
     let (t, r, w) = simulation.count_dead_hosts();
     simulation.pv("host_dying_initial_exposure", &format!("{} R({}) W({})", t, r, w), true);
-    simulation.set_species_left( species_possible);
+    simulation.set_species_left(species_possible);
     simulation.set_parasites_possible(parasites_possible);
 }
 
@@ -446,7 +444,8 @@ pub fn additional_exposure(simulation: &mut Simulation) {
             let species_index = species_par_host.get_mut(&host_index).unwrap().pop().unwrap();
             let parasite_index = parasites_possible[species_index].pop().unwrap();
             let mut p_idx = ParasiteSpeciesIndex {
-                species_index, parasite_index,
+                species_index,
+                parasite_index,
                 match_count: 0,
             };
             let match_score = find_match_score(&host, &all_parasites, &mut p_idx, &simulation);
@@ -480,33 +479,24 @@ pub fn additional_exposure(simulation: &mut Simulation) {
 pub fn birth_hosts(simulation: &mut Simulation) {
     let file_name = "hosts_birth";
     let (dist, choices) = match simulation.program_version() {
-        ProgramVersions::One => birth_generation_version_1(simulation),
-        ProgramVersions::Two => birth_generation_version_2(simulation),
-        ProgramVersions::Three => birth_generation_version_1(simulation),
-        ProgramVersions::Four => birth_generation_version_1(simulation),
+        ProgramVersions::One | ProgramVersions::Three => birth_generation_version_1(simulation),
+        ProgramVersions::Two | ProgramVersions::Four => birth_generation_version_2(simulation),
     };
     let mut rng = thread_rng();
     loop {
         // pick up parent host
         let random_host_index = choices[dist.sample(&mut rng)];
         let parent_index = match simulation.program_version() {
-            ProgramVersions::One => {
+            ProgramVersions::One | ProgramVersions::Three => {
                 random_host_selection_v1(&simulation, random_host_index)
             }
-            ProgramVersions::Two => {
-                // rng.gen_range(0..simulation.hosts().len())
-                choices[dist.sample(&mut rng)]
-            }
-            ProgramVersions::Three => {
-                random_host_selection_v1(&simulation, random_host_index)
-            }
-            ProgramVersions::Four => {
+            ProgramVersions::Two | ProgramVersions::Four => {
                 choices[dist.sample(&mut rng)]
             }
         };
 
         let parent_host = simulation.hosts()[parent_index].clone();
-        simulation.pv(file_name, &format!("{:3} {}\n", parent_index, parent_host), true);
+        simulation.pv(file_name, &format!("{}\n{:3} {}\n", simulation.program_version().to_string(), parent_index, parent_host), true);
         let mut index = None;
         for (ii, host) in simulation.hosts().iter().enumerate() {
             if !host.alive() {
@@ -578,7 +568,7 @@ pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex
             simulation.pref().p(),
         )
     }).collect();
-    simulation.pv("hosts_birth", &format!("Birth V1: {:#?}, {:#?}\n", chances, choices), true);
+    simulation.pv("hosts_birth", &format!("Birth V2: {:#?}, {:#?}\n", chances, choices), true);
     (WeightedIndex::new(chances).unwrap(), choices)
 }
 
@@ -616,13 +606,18 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
         individuals_with_score.insert(k, Vec::new());
     }
     // calculate frequencies and cumulative frequency of each score
-    for ((species, parasites), match_score) in match_scores.iter() {
+    match_scores.iter().for_each(|((species, parasites), match_score)| {
         *frequency.entry(*match_score).or_insert(0) += 1;
-        // group parasites by score
         individuals_with_score.get_mut(&match_score).unwrap().push((species.clone(), parasites.clone()));
-        // update cumulative frequency
         cumulative_frequency[*match_score] += 1;
-    }
+    });
+    // for ((species, parasites), match_score) in match_scores.iter() {
+    //     *frequency.entry(*match_score).or_insert(0) += 1;
+    //     // group parasites by score
+    //     individuals_with_score.get_mut(&match_score).unwrap().push((species.clone(), parasites.clone()));
+    //     // update cumulative frequency
+    //     cumulative_frequency[*match_score] += 1;
+    // }
     let mut rng = thread_rng();
     //
     _s.push_str(&format!("{: >6} {: >12} {: >12}\n", "parasite", "killed", "new parent"));
