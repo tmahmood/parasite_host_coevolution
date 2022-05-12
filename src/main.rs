@@ -105,8 +105,14 @@ fn main() {
     let reservation_hosts_ar = Array2::from_shape_vec((pref.gg(), pref.ff()), flat_reservation_hosts).unwrap();
     let wild_hosts_ar = Array2::from_shape_vec((pref.gg(), pref.ff()), flat_wild_hosts).unwrap();
 
-    generate_excel(&reservation_hosts_ar, "reservation_host_confidence", &pref);
-    generate_excel(&wild_hosts_ar, "wild_host_confidence", &pref);
+    let mut f = File::create("report/confidence.csv").expect("Unable to create file");
+    f.write_all("Generation, Standard Deviation (R), Means (R), High Point (R), Low Point (R), Standard Deviation (W), Means (W), High Point (W), Low Point (W)\n".as_bytes()).expect("Failed to write to file");
+
+    let l1 = generate_excel(&reservation_hosts_ar, &pref);
+    let l2 = generate_excel(&wild_hosts_ar, &pref);
+    for ii in 0..pref.gg() {
+        f.write_all(format!("{}, {}, {}\n", ii, l1[ii], l2[ii]).as_bytes()).expect("Failed to write row");
+    }
     let last_row_r = reservation_hosts_ar.index_axis(Axis(1), pref.ff() - 1).to_owned();
     let last_row_w = wild_hosts_ar.index_axis(Axis(1), pref.ff() - 1).to_owned();
     let r = calculate_result((last_row_r, last_row_w), pref.gg());
@@ -114,20 +120,17 @@ fn main() {
     println!("took {} secs", now.elapsed().as_secs())
 }
 
-fn generate_excel(hosts: &ArrayBase<OwnedRepr<usize>, Ix2>, x: &str, pref: &SimulationPref) {
-    let mut f = File::create(format!("report/{}.csv", x)).expect("Unable to create file");
-    f.write_all(format!("Standard Deviation, Means, High Point, Low Point\n").as_bytes()).expect("Failed to write to file");
-    hosts.columns().into_iter().for_each(|v| {
+fn generate_excel(hosts: &ArrayBase<OwnedRepr<usize>, Ix2>, pref: &SimulationPref) -> Vec<String> {
+    hosts.columns().into_iter().map(|v| {
         let mut r = ReportHostType::new(v.to_owned());
         r.calculate(pref.clone());
-        f.write_all(
-            format!("{},{},{},{}\n",
-                    r.standard_deviation(),
-                    r.mean(),
-                    r.confidence_interval_high_point(),
-                    r.confidence_interval_low_point()
-            ).as_bytes()).expect("Failed to write to file");
-    });
+        format!("{},{},{},{}",
+                r.standard_deviation(),
+                r.mean(),
+                r.confidence_interval_high_point(),
+                r.confidence_interval_low_point()
+        )
+    }).collect()
 }
 
 fn calculate_result(result: (Array1<usize>, Array1<usize>), ff: usize) -> GGRunReport {
@@ -368,6 +371,7 @@ fn random_host_selection_v1(simulation: &Simulation, random_host_index: usize) -
 pub fn birth_generation_version_1(simulation: &mut Simulation) -> (WeightedIndex<f32>, Vec<usize>) {
     let (_, no_of_dead_reservation_host, no_of_dead_wild_host) = simulation.count_dead_hosts();
     let (_, no_of_reservation_host_alive, no_of_wild_host_alive) = simulation.count_alive_hosts();
+    let p = if (simulation.current_generation() as i32) < simulation.pref().l() { 0. } else { simulation.pref().p() } as f32;
     let (chance_reservation, chance_wild) = get_chances_v1(
         no_of_dead_wild_host as f32,
         no_of_reservation_host_alive as f32,
@@ -375,7 +379,7 @@ pub fn birth_generation_version_1(simulation: &mut Simulation) -> (WeightedIndex
         simulation.pref().y(),
         no_of_wild_host_alive as f32,
         simulation.pref().o(),
-        simulation.pref().p(),
+        p,
     );
     let choices = vec![0, 1];
     simulation.pv("hosts_birth", &format!("Birth V1: {}, {}, {:?}\n", chance_reservation, chance_wild, choices), true);
@@ -383,6 +387,7 @@ pub fn birth_generation_version_1(simulation: &mut Simulation) -> (WeightedIndex
 }
 
 pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex<f32>, Vec<usize>) {
+    let p = if (simulation.current_generation() as i32) < simulation.pref().l() { 0. } else { simulation.pref().p() } as f32;
     let (_, no_of_dead_reservation_host, no_of_dead_wild_host) = simulation.count_dead_hosts();
     let host_match_score = simulation.simulation_state().host_match_score().clone();
     let qr: f32 = find_sum_of_match_score(&host_match_score, simulation.hosts(), HostTypes::Reservation);
@@ -402,7 +407,7 @@ pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex
             no_of_dead_reservation_host as f32,
             simulation.pref().o(),
             simulation.pref().y(),
-            simulation.pref().p(),
+            p,
         )
     }).collect();
     simulation.pv("hosts_birth", &format!("Birth V2: {:#?}, {:#?}\n", chances, choices), true);
