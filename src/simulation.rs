@@ -3,10 +3,12 @@ use std::fmt::{Display, Formatter};
 use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::Write;
 use std::num::ParseIntError;
+use std::ops::Div;
 
-use ndarray::{Array, Array3, Axis, Ix, Ix1, Ix2, Ix3};
+use ndarray::{Array, Array1, Array3, ArrayView1, Axis, Ix, Ix1, Ix2, Ix3};
 use ndarray_rand::RandomExt;
 use rand::distributions::Uniform;
+use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelRefIterator;
 
 use crate::{generate_individual, HostTypes, SimulationPref};
@@ -51,6 +53,7 @@ pub struct Simulation {
     generations: Vec<SimulationState>,
     program_version: ProgramVersions,
     gg: usize,
+    log_files: HashMap<String, String>,
 }
 
 impl Simulation {
@@ -63,8 +66,7 @@ impl Simulation {
     }
 }
 
-impl Simulation {
-}
+impl Simulation {}
 
 
 #[derive(Clone, Debug)]
@@ -78,7 +80,7 @@ pub struct SimulationState {
     parasites: Array<usize, Ix3>,
     host_match_score: HashMap<usize, usize>,
     species_left: HashMap<usize, Vec<usize>>,
-    parasites_possible: Vec<Vec<usize>>
+    parasites_possible: Vec<Vec<usize>>,
 }
 
 impl Default for SimulationState {
@@ -91,7 +93,7 @@ impl Default for SimulationState {
             parasites: Default::default(),
             host_match_score: Default::default(),
             species_left: Default::default(),
-            parasites_possible: vec![]
+            parasites_possible: vec![],
         }
     }
 }
@@ -112,7 +114,6 @@ impl SimulationState {
     pub fn host_match_score(&self) -> &HashMap<usize, usize> {
         &self.host_match_score
     }
-
 }
 
 pub fn create_random_parasites(pref: &SimulationPref) -> Array3<usize> {
@@ -127,18 +128,17 @@ pub fn create_random_parasites(pref: &SimulationPref) -> Array3<usize> {
 
 pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg: usize) -> Simulation {
     let hosts = create_random_hosts(&pref);
-    //
-    let parasites= create_random_parasites(&pref);
+    let parasites = create_random_parasites(&pref);
     // create log folder
     if gg < 3 {
         let g_folder = format!("report/sim_{}", gg);
-        create_dir_all(&g_folder);
+        create_dir_all(&g_folder).expect("Failed to create directory");
         let mut f = File::create(format!("{}/hosts", g_folder)).expect("Unable to create file");
         f.write_all(&format!("{:#?}", hosts).to_string().as_bytes()).expect("Unable to write data");
         let mut f = File::create(format!("{}/parasites", g_folder)).expect("Unable to create file");
         f.write_all(print_parasites(&parasites).as_bytes()).expect("Unable to write data");
         for ff in 0..3 {
-            create_dir_all(format!("{}/{}", g_folder, ff));
+            create_dir_all(format!("{}/{}", g_folder, ff)).expect("Failed to create directory");
         }
     }
     Simulation {
@@ -151,24 +151,21 @@ pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg
         generations: vec![],
         program_version,
         gg,
+        log_files: HashMap::new(),
     }
 }
 
 impl Simulation {
+    pub fn generations(&self) -> &Vec<SimulationState> {
+        &self.generations
+    }
+
     pub fn set_species_left(&mut self, species_left: HashMap<usize, Vec<usize>>) {
         self.simulation_state.species_left = species_left;
     }
 
     pub(crate) fn species_left(&self) -> HashMap<usize, Vec<usize>> {
         self.simulation_state.species_left.clone()
-    }
-
-    pub(crate) fn species_left_mut(&mut self) -> &mut HashMap<usize, Vec<usize>> {
-        &mut self.simulation_state.species_left
-    }
-
-    pub(crate) fn set_host_match_score(&mut self, host_match_score: HashMap<usize, usize>) {
-        self.simulation_state.host_match_score = host_match_score;
     }
 
     pub(crate) fn update_host_match_score(&mut self, host_index: usize, inc: usize) {
@@ -178,31 +175,39 @@ impl Simulation {
     pub(crate) fn species_match_score(&self) -> &HashMap<usize, usize> {
         &self.simulation_state.species_match_score
     }
-    /** Updates species total match score (species index) => match score) */
-    pub(crate) fn set_species_match_score(&mut self, species_match_score: HashMap<usize, usize>) {
-        self.simulation_state.species_match_score = species_match_score;
-    }
 
     pub fn update_species_match_score(&mut self, species_index: usize, match_score: usize) {
         *self.simulation_state.species_match_score.entry(species_index).or_insert(0) += match_score;
     }
 
-    pub fn pv(&self, file_name: &str, content: &str, append: bool) {
-        if self.gg() < 3 && self.current_generation() < 3 {
-            let f_folder = format!("report/sim_{}/{}", self.gg(), self.current_generation());
-            let file_path = format!("{}/{}.txt", f_folder, file_name);
-            let mut f = if append {
-                OpenOptions::new()
-                    .append(true)
-                    .create(true) // Optionally create the file if it doesn't already exist
-                    .open(file_path)
-                    .expect("Unable to open file")
-            } else {
-                File::create(file_path).expect("Unable to create file")
-            };
+    pub fn pp(&self, file_name: &str, content: &str, txt: bool) {
+        let file_path = self.get_file_path(file_name, txt, false);
+        let mut f = OpenOptions::new()
+            .append(true)
+            .create(true) // Optionally create the file if it doesn't already exist
+            .open(file_path)
+            .expect("Unable to open file");
+        f.write_all(content.as_bytes()).expect("unable to write data");
+    }
+
+    pub fn write_all(&self) {
+        self.log_files.iter().for_each(|(file_path, content)| {
+            let mut f = OpenOptions::new()
+                .append(true)
+                .create(true) // Optionally create the file if it doesn't already exist
+                .open(file_path)
+                .expect("Unable to open file");
             f.write_all(content.as_bytes()).expect("unable to write data");
+        });
+    }
+
+    pub fn pv(&mut self, file_name: &str, content: &str, txt: bool) {
+        if self.gg() < 3 && self.current_generation() < 3 {
+            let file_path = self.get_file_path(file_name, txt, true);
+            self.log_files.entry(file_path.clone()).or_insert(String::new()).push_str(content);
         }
     }
+
     /**
     update parasite with parent parasite's number set
      */
@@ -214,19 +219,10 @@ impl Simulation {
         }
     }
 
-    /** set parasites scores, key is (Species, Parasite) => Match score */
-    pub(crate) fn set_parasites_exposed_to(&mut self, parasites_exposed_to: HashMap<SpeciesParasite, usize>) {
-        self.simulation_state.match_scores = parasites_exposed_to;
-    }
 
     /** update parasites scores, key is (Species, Parasite) => Match score */
     pub(crate) fn update_parasites_exposed_to(&mut self, key: SpeciesParasite, parasite: usize) {
         self.simulation_state.match_scores.insert(key, parasite);
-    }
-
-    /** get a clone of parasites scores, key is (Species, Parasite) => Match score */
-    pub(crate) fn parasites_exposed_to(&mut self) -> HashMap<(usize, usize), usize> {
-        self.simulation_state.match_scores.clone()
     }
 
     pub fn pref(&self) -> SimulationPref {
@@ -305,9 +301,7 @@ impl Simulation {
         self.simulation_state.current_generation
     }
 
-    pub fn next_generation(&mut self) {
-        self.pv("hosts_end",&format!("{:#?}", self.hosts()), true);
-        self.pv("parasites_end",&format!("{}", print_parasites(self.parasites())), true);
+    pub fn next_generation(&mut self) -> HostsCount {
         self.generations.push(self.simulation_state.clone());
         let generation = self.simulation_state.current_generation + 1;
         self.simulation_state = SimulationState {
@@ -316,6 +310,7 @@ impl Simulation {
             current_generation: generation,
             ..Default::default()
         };
+        self.get_hosts_count()
     }
 
     pub fn simulation_state(&self) -> &SimulationState {
@@ -326,19 +321,37 @@ impl Simulation {
         self.simulation_state = simulation_state;
     }
 
-    pub fn generate_report(&self) -> HostsCount {
-        let (_, r, w) = self.count_alive_hosts_from_generation(self.generations.last().unwrap());
+
+    pub fn get_hosts_count(&self) -> HostsCount {
+        let (_, r, w) = self.count_alive_hosts_from_generation(
+            self.generations.last().unwrap()
+        );
         HostsCount {
             wild_host: w,
             reservation_host: r,
         }
     }
+
     pub fn program_version(&self) -> ProgramVersions {
         self.program_version.clone()
     }
 
     pub fn gg(&self) -> usize {
         self.gg
+    }
+
+    fn get_file_path(&self, file_name: &str, txt: bool, inc_gen: bool) -> String {
+        let f_folder = if inc_gen {
+            format!("report/sim_{}/{}", self.gg(), self.current_generation())
+        } else {
+            format!("report/sim_{}", self.gg())
+        };
+        let extension = if txt {
+            "txt"
+        } else {
+            "csv"
+        };
+        format!("{}/{}.{}", f_folder, file_name, extension)
     }
 }
 
@@ -354,25 +367,125 @@ impl Display for HostsCount {
     }
 }
 
+pub struct ReportHostType {
+    pub hosts_count: Array1<usize>,
+    total_host: usize,
+    mean: f32,
+    standard_deviation: f32,
+    standard_error: f32,
+    confidence_interval_high_point: f32,
+    confidence_interval_low_point: f32,
+}
+
+impl ReportHostType {
+
+    pub fn new(hosts_count: Array1<usize>) -> Self {
+        ReportHostType {
+            total_host: hosts_count.sum(),
+            hosts_count,
+            mean: 0.0,
+            standard_deviation: 0.0,
+            standard_error: 0.0,
+            confidence_interval_high_point: 0.0,
+            confidence_interval_low_point: 0.0,
+        }
+    }
+
+    pub fn calculate(&mut self, pref: SimulationPref) {
+        self.mean = self.total_host as f32 / self.hosts_count.len() as f32;
+        // Sqrt[ ( (100-100.4)^2 + (80-100.4)^2 + (92-100.4)^2 + (110-100.4)^2 + (120-100.4)^2 ) /4
+        //   ] = 15.5177
+        self.standard_deviation = self.hosts_count.iter().map(|v| {
+            (*v as f32 - self.mean).powf(2.)
+        }).sum::<f32>()
+            .div(pref.gg() as f32 - 1.)
+            .sqrt();
+        self.standard_error = self.standard_deviation / (pref.gg() as f32).sqrt();
+        self.confidence_interval_high_point = self.mean + pref.z() * self.standard_error;
+        self.confidence_interval_low_point = self.mean - pref.z() * self.standard_error;
+    }
+    pub fn total_host(&self) -> usize {
+        self.total_host
+    }
+    pub fn mean(&self) -> f32 {
+        self.mean
+    }
+    pub fn standard_deviation(&self) -> f32 {
+        self.standard_deviation
+    }
+    pub fn standard_error(&self) -> f32 {
+        self.standard_error
+    }
+    pub fn confidence_interval_high_point(&self) -> f32 {
+        self.confidence_interval_high_point
+    }
+    pub fn confidence_interval_low_point(&self) -> f32 {
+        self.confidence_interval_low_point
+    }
+}
+
+impl Display for ReportHostType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut _s = String::new();
+        _s.push_str(&format!("standard deviation:\n        {:10.3}\n", self.standard_deviation));
+        _s.push_str(&format!("Confidence Interval:\n {: >24} {: >11}{: >12}\n", "Means", "High Point", "Low Point"));
+        _s.push_str(&format!("             {:12.3}{:12.3}{:12.3}\n", self.mean, self.confidence_interval_high_point, self.confidence_interval_low_point));
+        write!(f, "{}", _s)
+    }
+}
+
 #[derive(Debug)]
 pub struct GGRunReport {
-    pub hosts_count: HostsCount,
-    pub wild_loner: usize,
-    pub reservation_loner: usize,
-    pub high_wild: usize,
-    pub high_reservation: usize,
-    pub tied: usize,
+    pub hosts: (Array1<usize>, Array1<usize>),
+    generations: usize,
+    wild_loner: usize,
+    reservation_loner: usize,
+    high_wild: usize,
+    high_reservation: usize,
+    tied: usize,
+    total_reservation_host: usize,
+    total_wild_host: usize,
+}
+
+impl GGRunReport {
+    pub fn new(hosts: (Array1<usize>, Array1<usize>), ff: usize) -> Self {
+        GGRunReport {
+            hosts,
+            generations: ff,
+            wild_loner: 0,
+            reservation_loner: 0,
+            high_wild: 0,
+            high_reservation: 0,
+            tied: 0,
+            total_reservation_host: 0,
+            total_wild_host: 0,
+        }
+    }
+
+    pub fn calculations(&mut self) {
+        for i in 0..self.generations {
+            let r = self.hosts.0[i];
+            let w = self.hosts.1[i];
+            if r > w { self.high_reservation += 1 }
+            if r < w { self.high_wild += 1 }
+            if r == w { self.tied += 1 }
+            if r == 0 { self.wild_loner += 1 }
+            if w == 0 { self.reservation_loner += 1 }
+            self.total_reservation_host += r;
+            self.total_wild_host += w
+        }
+    }
 }
 
 impl Display for GGRunReport {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut s = String::new();
-        s.push_str(&format!("- {} runs ended with wild individuals the lone type remaining", self.wild_loner));
-        s.push_str(&format!("- {} runs ended with reservation individuals the lone type remaining", self.reservation_loner));
-        s.push_str(&format!("- {} runs ended with wild individuals a higher quantity than reservation individuals", self.high_wild));
-        s.push_str(&format!("- {} runs ended with reservation individuals a higher quantity than wild individuals", self.high_reservation));
-        s.push_str(&format!("- {} runs ended with the quantities of the two types tied", self.tied));
-        write!(f, "{}", s)
+        let mut _s = String::new();
+        _s.push_str(&format!("- {} runs ended with wild individuals the lone type remaining\n", self.wild_loner));
+        _s.push_str(&format!("- {} runs ended with reservation individuals the lone type remaining\n", self.reservation_loner));
+        _s.push_str(&format!("- {} runs ended with wild individuals a higher quantity than reservation individuals\n", self.high_wild));
+        _s.push_str(&format!("- {} runs ended with reservation individuals a higher quantity than wild individuals\n", self.high_reservation));
+        _s.push_str(&format!("- {} runs ended with the quantities of the two types tied\n", self.tied));
+        write!(f, "{}", _s)
     }
 }
 
@@ -385,7 +498,7 @@ pub fn print_parasites(all_parasites: &Array3<usize>) -> String {
         _s.push_str(&format!("Species: {}\n", ii));
         for jj in 0..l2 {
             let v = all_parasites.index_axis(Axis(0), ii);
-            _s.push_str(&format!("({}, {}) {}\n", ii, jj, v.index_axis(Axis(0), jj)));
+            _s.push_str(&format!("({: >3}, {: >3}) {}\n", ii, jj, v.index_axis(Axis(0), jj)));
         }
         _s.push_str("\n");
     }

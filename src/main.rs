@@ -1,3 +1,4 @@
+#![feature(iter_collect_into)]
 extern crate core;
 extern crate rand;
 extern crate serde;
@@ -5,263 +6,37 @@ extern crate serde_derive;
 extern crate serde_ini;
 
 use std::{fs, time};
-use std::cmp::max;
 use std::collections::HashMap;
 use std::env::args;
-use std::fmt::{Display, format, Formatter};
-use std::fs::{create_dir_all, File, OpenOptions, remove_dir_all, remove_file};
+use std::fmt::{Display, Formatter};
+use std::fs::{File, remove_dir_all};
 use std::io::Write;
 use std::ops::Div;
-use std::path::Path;
 
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressBar, ProgressIterator, ProgressStyle};
 use log;
-use log::{info, LevelFilter, SetLoggerError};
+use log::{LevelFilter, SetLoggerError};
 use log4rs::{Config, Handle};
 use log4rs::append::console::ConsoleAppender;
 use log4rs::append::file::FileAppender;
 use log4rs::append::rolling_file::RollingFileAppender;
 use log4rs::config::{Appender, Root};
 use log4rs::encode::pattern::PatternEncoder;
-use ndarray::{Array, Array1, Array3, ArrayBase, ArrayView1, Axis, Ix, Ix1, Ix3, OwnedRepr};
+use ndarray::{arr2, Array, Array1, Array2, Array3, ArrayBase, ArrayView1, Axis, Ix, Ix1, Ix2, Ix3, OwnedRepr};
 use ndarray_rand::RandomExt;
 use rand::{Rng, thread_rng};
 use rand::distributions::{Uniform, WeightedIndex};
 use rand::prelude::*;
 use rayon::prelude::*;
 
-use parasites::random_parasite;
-
-use crate::hosts::{Host, HostTypes};
-use crate::simulation::{HostsCount, new_simulation, print_parasites, ProgramVersions, Simulation};
+use crate::hosts::{create_random_hosts, Host, HostTypes};
+use crate::simulation::{create_random_parasites, GGRunReport, HostsCount, new_simulation, print_parasites, ProgramVersions, ReportHostType, Simulation};
 use crate::simulation_pref::SimulationPref;
-use crate::simulation_runner::SimulationRunner;
-
-// It's important to shuffle lists before the random processes. In the past when I've hired for
-// these sorts of programs, the biggest problem has been that individuals of one type were more
-// likely to get chosen for reproduction or death because lists weren't shuffled, and that causes
-// the random processes to be biased.
 
 pub mod simulation_pref;
 pub mod parasites;
 pub mod hosts;
 pub mod simulation;
-
-pub mod simulation_runner {
-    use crate::{Simulation, SimulationPref};
-
-    pub struct SimulationRunner {
-        pref: SimulationPref,
-    }
-
-    impl SimulationRunner {
-        pub fn new(pref: SimulationPref) -> SimulationRunner {
-            SimulationRunner {
-                pref
-            }
-        }
-    }
-}
-
-fn calculate_result(result: Vec<HostsCount>, pref: SimulationPref) -> String {
-    let mut wild_loner = 0;
-    let mut reservation_loner = 0;
-    let mut high_wild = 0;
-    let mut high_reservation = 0;
-    let mut tied = 0;
-    let mut total_reservation_host = 0;
-    let mut total_wild_host = 0;
-    for generation in result.iter() {
-        let r = generation.reservation_host;
-        let w = generation.wild_host;
-        if r > w { high_reservation += 1 }
-        if r < w { high_wild += 1 }
-        if r == w { tied += 1 }
-        if r == 0 { wild_loner += 1 }
-        if w == 0 { reservation_loner += 1 }
-        total_reservation_host += r;
-        total_wild_host += w
-    }
-
-    let mut _s = String::new();
-    let mean_wild = total_wild_host as f32 / result.len() as f32;
-    let mean_reservation = total_reservation_host as f32 / result.len() as f32;
-    // Sqrt[
-    //   (
-    //      (100-100.4)^2 +
-    //      (80-100.4)^2 +
-    //      (92-100.4)^2 +
-    //      (110-100.4)^2 +
-    //      (120-100.4)^2
-    //   ) /4
-    //   ] = 15.5177
-    let standard_deviation_w: f32 = result.par_iter().map(|v| {
-        (v.wild_host as f32 - mean_wild).powf(2.)
-    }).sum::<f32>()
-        .div(pref.gg() as f32 - 1.)
-        .sqrt();
-    let standard_deviation_r: f32 = result.par_iter().map(|v| {
-        (v.reservation_host as f32 - mean_reservation).powf(2.)
-    }).sum::<f32>()
-        .div(pref.gg() as f32 - 1.)
-        .sqrt();
-
-    let standard_error_w = standard_deviation_w / (pref.gg() as f32).sqrt();
-    let standard_error_r = standard_deviation_r / (pref.gg() as f32).sqrt();
-
-    let confidence_interval_w_high_point = mean_wild + pref.z() * standard_error_w;
-    let confidence_interval_w_low_point = mean_wild - pref.z() * standard_error_w;
-
-    let confidence_interval_r_high_point = mean_reservation + pref.z() * standard_error_r;
-    let confidence_interval_r_low_point = mean_reservation - pref.z() * standard_error_r;
-
-    _s.push_str(&format!("- {} runs ended with wild individuals the lone type remaining\n", wild_loner));
-    _s.push_str(&format!("- {} runs ended with reservation individuals the lone type remaining\n", reservation_loner));
-    _s.push_str(&format!("- {} runs ended with wild individuals a higher quantity than reservation individuals\n", high_wild));
-    _s.push_str(&format!("- {} runs ended with reservation individuals a higher quantity than wild individuals\n", high_reservation));
-    _s.push_str(&format!("- {} runs ended with the quantities of the two types tied\n", tied));
-    // _s.push_str(&format!("means:\n WILD: {: <10}\n RESERVATION: {: <10}\n", mean_wild, mean_reservation));
-    _s.push_str(&format!("standard deviation:\n WILD        {:10.3}\n RESERVATION {:10.3}\n", standard_deviation_w, standard_deviation_r));
-    _s.push_str(&format!("Confidence Interval:\n {: >24} {: >11}{: >12}\n", "Means", "High Point", "Low Point"));
-    _s.push_str(&format!(" WILD        {:12.3}{:12.3}{:12.3}\n RESERVATION {:12.3}{:12.3}{:12.3}\n",
-                         mean_wild, confidence_interval_w_high_point, confidence_interval_w_low_point,
-                         mean_reservation, confidence_interval_r_high_point, confidence_interval_r_low_point));
-    _s
-}
-
-
-fn should_continue(simulation: &mut Simulation) -> bool {
-    let (t, r, w) = simulation.count_alive_hosts();
-    !(r == 0 || w == 0)
-}
-
-#[inline]
-/**
-Calculates Percentile rank using the following formula
-
-PR = (CF - (0.5 * F)) * 100 / N
-
-where
-**CF**—the cumulative frequency—is the count of all scores less than or equal to the score of interest,
-**F** is the frequency for the score of interest, and
-**N** is the number of scores in the distribution
-
-https://en.wikipedia.org/wiki/Percentile_rank
- */
-fn calculate_percentile(cf: usize, f: usize, total: usize) -> f32 {
-    // cf, f, total
-    ((cf as f32 - f as f32 / 2.) / total as f32) * 100.
-}
-
-#[test]
-fn test_calculate_percentile() {
-    assert_eq!(
-        calculate_percentile(10, 2, 10), 90.
-    );
-    assert_eq!(
-        calculate_percentile(8, 3, 10), 65.
-    );
-    assert_eq!(
-        calculate_percentile(5, 5, 10), 25.
-    );
-}
-
-fn config_logger(parallel_run: i32) -> Result<Handle, SetLoggerError> {
-    let logfile = FileAppender::builder()
-        .encoder(Box::new(PatternEncoder::new("{l} - {m}\n")))
-        .build("report/output.log").unwrap();
-    let console = ConsoleAppender::builder()
-        .encoder(Box::new(PatternEncoder::new("{l} - {m}\n")))
-        .build();
-    let mut root_builder = Root::builder();
-    let mut config = Config::builder()
-        .appender(Appender::builder().build("logfile", Box::new(logfile)));
-    if parallel_run == 0 {
-        config = config.appender(Appender::builder().build("console", Box::new(console)));
-        root_builder = root_builder.appender("console");
-    }
-    let c = config.build(root_builder.appender("logfile").build(LevelFilter::Info));
-    log4rs::init_config(c.unwrap())
-}
-
-
-fn main() {
-    let multi_progress_bar = MultiProgress::new();
-    let sty = ProgressStyle::with_template(
-        "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7} {msg}",
-    )
-        .unwrap()
-        .progress_chars("##-");
-
-
-    remove_dir_all("report");
-    let param_file = args().nth(1).unwrap_or(format!("params.conf"));
-    let program = ProgramVersions::from(args().nth(2).unwrap_or(format!("1")));
-    let parallel_run = args().nth(3).unwrap_or(format!("0"));
-    config_logger(
-        if parallel_run == "0" {
-            0
-        } else {
-            1
-        }
-    ).unwrap();
-    let pref: SimulationPref = serde_ini::from_str(&fs::read_to_string(param_file).unwrap()).unwrap();
-
-    //
-    let pb_all_simulation = multi_progress_bar.add(ProgressBar::new(pref.gg() as u64));
-    pb_all_simulation.set_style(sty.clone());
-    //
-    let pb_generations = multi_progress_bar.insert_after(&pb_all_simulation, ProgressBar::new(pref.ff() as u64));
-    pb_generations.set_style(sty.clone());
-    //
-
-    let now = time::Instant::now();
-    let mut result: Vec<HostsCount> = vec![];
-
-    if parallel_run == "1" {
-        println!("Running parallel version, will log to file. {}", program);
-        let program_clone = program.clone();
-        let pref_clone = pref.clone();
-        (0..pref.gg()).into_par_iter().progress_with(pb_all_simulation).map(move |gg| {
-            run_generation_step(program_clone, gg.clone(), pref_clone)
-        }).collect_into_vec(&mut result);
-    } else {
-        info!("Running normal version. {}", program);
-        let program_clone = program.clone();
-        let pref_clone = pref.clone();
-        result = (0..pref.gg()).into_iter().progress_with(pb_all_simulation).map(|gg| {
-            run_generation_step(program_clone, gg.clone(), pref_clone)
-        }).collect();
-    }
-    let r = calculate_result(result.clone(), pref.clone());
-    info!("{}", r);
-    println!("took {} secs", now.elapsed().as_secs())
-}
-
-fn run_generation_step(program: ProgramVersions, gg: usize, pref: SimulationPref) -> HostsCount {
-    let bar = ProgressBar::new(pref.ff() as u64);
-    let mut simulation = new_simulation(pref.clone(), program, gg);
-    let mut lines = vec![];
-    (0..pref.ff()).into_iter().progress().for_each(|_| {
-        expose_all_hosts_to_parasites(&mut simulation);
-        additional_exposure(&mut simulation);
-        if !should_continue(&mut simulation) {
-            simulation.next_generation();
-            return;
-        }
-        birth_hosts(&mut simulation);
-        parasite_truncation_and_birth(&mut simulation);
-        mutation(&mut simulation);
-        parasite_replacement(&mut simulation);
-        simulation.next_generation();
-        lines.push(simulation.generate_report());
-    });
-    simulation.generate_report()
-}
-
-pub fn generate_individual(f: usize, len: usize) -> Array1<usize> {
-    Array::random(len, Uniform::new(0, f))
-}
 
 #[derive(Debug, Clone)]
 pub struct ParasiteSpeciesIndex {
@@ -287,6 +62,109 @@ impl Display for ParasiteSpeciesIndex {
         write!(f, "S{: <3} P{: <3} M{: <3} ", self.species_index, self.parasite_index, self.match_count)
     }
 }
+
+fn main() {
+    let multi_progress_bar = MultiProgress::new();
+    let sty = ProgressStyle::with_template(
+        "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7} {msg}",
+    )
+        .unwrap()
+        .progress_chars("##-");
+
+
+    remove_dir_all("report").expect("Failed to remove report directory");
+    let param_file = args().nth(1).unwrap_or(format!("params.conf"));
+    let program = ProgramVersions::from(args().nth(2).unwrap_or(format!("1")));
+    config_logger(1).unwrap();
+    let pref: SimulationPref = serde_ini::from_str(&fs::read_to_string(param_file).unwrap()).unwrap();
+    //
+    let pb_all_simulation = multi_progress_bar.add(ProgressBar::new(pref.gg() as u64));
+    pb_all_simulation.set_style(sty.clone());
+    //
+    let pb_generations = multi_progress_bar.insert_after(&pb_all_simulation, ProgressBar::new(pref.ff() as u64));
+    pb_generations.set_style(sty.clone());
+    //
+
+    type UsizeVec = Vec<(Vec<usize>, Vec<usize>)>;
+    let now = time::Instant::now();
+
+    println!("Running parallel version, will log to file. {}", program);
+    let program_clone = program.clone();
+    let pref_clone = pref.clone();
+    let mut wild_hosts = vec![];
+    let mut reservation_hosts = vec![];
+    (0..pref.gg()).into_par_iter().progress_with(pb_all_simulation).map(move |gg| {
+        run_generation_step(program_clone, gg.clone(), pref_clone)
+    }).unzip_into_vecs(
+        &mut wild_hosts,
+        &mut reservation_hosts,
+    );
+
+    let flat_wild_hosts: Vec<usize> = wild_hosts.iter().flatten().cloned().collect();
+    let flat_reservation_hosts: Vec<usize> = reservation_hosts.iter().flatten().cloned().collect();
+    let reservation_hosts_ar = Array2::from_shape_vec((pref.gg(), pref.ff()), flat_reservation_hosts).unwrap();
+    let wild_hosts_ar = Array2::from_shape_vec((pref.gg(), pref.ff()), flat_wild_hosts).unwrap();
+
+    generate_excel(&reservation_hosts_ar, "reservation_host_confidence", &pref);
+    generate_excel(&wild_hosts_ar, "wild_host_confidence", &pref);
+    let last_row_r = reservation_hosts_ar.index_axis(Axis(1), pref.ff() - 1).to_owned();
+    let last_row_w = wild_hosts_ar.index_axis(Axis(1), pref.ff() - 1).to_owned();
+    let r = calculate_result((last_row_r, last_row_w), pref.gg());
+    println!("{}", r);
+    println!("took {} secs", now.elapsed().as_secs())
+}
+
+fn generate_excel(hosts: &ArrayBase<OwnedRepr<usize>, Ix2>, x: &str, pref: &SimulationPref) {
+    let mut f = File::create(format!("report/{}.csv", x)).expect("Unable to create file");
+    f.write_all(format!("Standard Deviation, Means, High Point, Low Point\n").as_bytes()).expect("Failed to write to file");
+    hosts.columns().into_iter().for_each(|v| {
+        let mut r = ReportHostType::new(v.to_owned());
+        r.calculate(pref.clone());
+        f.write_all(
+            format!("{},{},{},{}\n",
+                    r.standard_deviation(),
+                    r.mean(),
+                    r.confidence_interval_high_point(),
+                    r.confidence_interval_low_point()
+            ).as_bytes()).expect("Failed to write to file");
+    });
+}
+
+fn calculate_result(result: (Array1<usize>, Array1<usize>), ff: usize) -> GGRunReport {
+    let mut report_gen = GGRunReport::new(result, ff);
+    report_gen.calculations();
+    report_gen
+}
+
+fn run_generation_step(program: ProgramVersions, gg: usize, pref: SimulationPref) -> (Vec<usize>, Vec<usize>) {
+    let mut simulation = new_simulation(pref.clone(), program, gg);
+    let mut lines = vec![];
+    (0..pref.ff()).into_iter().map(|_| {
+        expose_all_hosts_to_parasites(&mut simulation);
+        additional_exposure(&mut simulation);
+        if !should_continue(&mut simulation) {
+            return simulation.next_generation();
+        }
+        birth_hosts(&mut simulation);
+        parasite_truncation_and_birth(&mut simulation);
+        mutation(&mut simulation);
+        parasite_replacement(&mut simulation);
+        simulation.next_generation()
+    }).collect_into(&mut lines);
+    simulation.write_all();
+    let mut wild = vec![];
+    let mut reservation = vec![];
+    lines.clone()
+        .into_par_iter()
+        .map(|v| (v.wild_host, v.reservation_host))
+        .unzip_into_vecs(&mut wild, &mut reservation);
+    (wild, reservation)
+}
+
+pub fn generate_individual(f: usize, len: usize) -> Array1<usize> {
+    Array::random(len, Uniform::new(0, f))
+}
+
 
 pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
     let mut rng = thread_rng();
@@ -345,7 +223,7 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
         simulation.pv(file_name, &format!("-------------------------\n"), true);
         if match_score_bellow_threshold >= simulation.pref().x() {
             simulation.kill_host(host_index);
-            simulation.pv("host_dying_initial_exposure", &format!("{}\n", &simulation.hosts()[host_index].to_string()), true);
+            simulation.pv("host_dying_initial_exposure", &format!("{:3} {}\n", host_index, &simulation.hosts()[host_index].to_string()), true);
         }
     }
     let (t, r, w) = simulation.count_dead_hosts();
@@ -361,7 +239,7 @@ pub fn additional_exposure(simulation: &mut Simulation) {
     let (_, alive_reservation_hosts, _) = simulation.count_alive_hosts();
     // secondary exposure
     let secondary_allowed = (simulation.pref().a() + simulation.pref().b()) as f32 * simulation.pref().m();
-    if simulation.current_generation() <= simulation.pref().l() {
+    if simulation.current_generation() as i32 <= simulation.pref().l() {
         return;
     }
     if total_dead_hosts > secondary_allowed as usize {
@@ -418,7 +296,7 @@ pub fn additional_exposure(simulation: &mut Simulation) {
         simulation.pv(file_name, &format!("-------------------------\n"), true);
         if match_score_bellow_threshold >= simulation.pref().cc() {
             simulation.kill_host(host_index);
-            simulation.pv("host_dying_additional_exposure", &format!("{}\n", &host.to_string()), true);
+            simulation.pv("host_dying_additional_exposure", &format!("{:3} {}\n", host_index, &host.to_string()), true);
         }
     }
     let (t, r, w) = simulation.count_dead_hosts();
@@ -432,6 +310,13 @@ pub fn birth_hosts(simulation: &mut Simulation) {
         ProgramVersions::Two | ProgramVersions::Four => birth_generation_version_2(simulation),
     };
     let mut rng = thread_rng();
+    simulation.pv(file_name,
+                  &format!("{}\n{: >4} {: <width$} {}\n",
+                           simulation.program_version().to_string(),
+                           "index", "host", "target",
+                           width = simulation.pref().c() + 57),
+                  true);
+    //simulation.pv(file_name, , true);
     loop {
         // pick up parent host
         let random_host_index = choices[dist.sample(&mut rng)];
@@ -445,7 +330,6 @@ pub fn birth_hosts(simulation: &mut Simulation) {
         };
 
         let parent_host = simulation.hosts()[parent_index].clone();
-        simulation.pv(file_name, &format!("{}\n{:3} {}\n", simulation.program_version().to_string(), parent_index, parent_host), true);
         let mut index = None;
         for (ii, host) in simulation.hosts().iter().enumerate() {
             if !host.alive() {
@@ -457,6 +341,10 @@ pub fn birth_hosts(simulation: &mut Simulation) {
             panic!("I couldn't find any dead [{}] hosts!", parent_host.host_type());
         }
         let host_index = index.unwrap();
+        simulation.pv(file_name, &format!(" {: >4} {: >width$} {:4}\n",
+                                          parent_index,
+                                          parent_host, host_index,
+                                          width = simulation.pref().c() + 13), true);
         // now we get the host
         let (total_dead_hosts, _, _) = simulation.update_dead_host(host_index, parent_index);
         if total_dead_hosts == 0 { break; }
@@ -658,7 +546,8 @@ fn mutation(simulation: &mut Simulation) {
     let dist = WeightedIndex::new(&weights).unwrap();
     let choices = [0, 1];
     let mut rng = rand::thread_rng();
-    for host in simulation.hosts_mut() {
+    let mut mutated_hosts = String::new();
+    for (i, host) in simulation.hosts_mut().iter_mut().enumerate() {
         let mut m = host.number_set().clone();
         let mut changes = 0;
         for cc in 0..c {
@@ -669,11 +558,12 @@ fn mutation(simulation: &mut Simulation) {
             }
         }
         host.set_number_set(m);
+        mutated_hosts.push_str(&format!("{:4} {}\n", i, host.number_set().clone()));
     }
+    simulation.pv("mutated_hosts", &mutated_hosts, true);
     let weights: Vec<f32> = (0..simulation.pref().f()).map(|_| simulation.pref().k()).collect();
     let dist = WeightedIndex::new(&weights).unwrap();
     for mut parasite in simulation.parasites_mut().rows_mut() {
-        let old = parasite.to_owned();
         for cc in 0..g {
             let k = choices[dist.sample(&mut rng)];
             if k == 1 {
@@ -688,18 +578,6 @@ fn mutation(simulation: &mut Simulation) {
 }
 
 fn parasite_replacement(simulation: &mut Simulation) {
-    // For each parasite species during a generation, a total match score is calculated which
-    // is the sum of all match scores for individuals in that parasite species during that
-    // generation, including those match scores resulting from the extra exposure above.
-    // The Q species with the highest total match scores are eliminated (that is, all the E
-    // individuals from each of the Q species with the highest total match scores are eliminated).
-    // In their place come Q new species. For each new species, a set of G numbers is
-    // randomly generated, and these numbers can be either of F possible values.  For each
-    // individual in the new species, that individual’s set of G numbers is the same as this
-    // set that was just generated for that species.  (This sameness of the set of G numbers
-    // for each individual in a parasite species is only temporary.  Differences in the values
-    // between each individual in a parasite species will probably be caused in the Mutation
-    // step of each generation.)
     let mut replaced = 0;
     let to_be_replaced = simulation.pref().q();
     // find the max value
@@ -719,10 +597,63 @@ fn parasite_replacement(simulation: &mut Simulation) {
             for mut row in species.rows_mut() {
                 row[ii] = *iv;
             }
-            //println!("{}", species.index_axis(Axis(0), ky));
         }
         replaced += 1;
-
     }
+}
+
+
+fn should_continue(simulation: &mut Simulation) -> bool {
+    let (t, r, w) = simulation.count_alive_hosts();
+    !(r == 0 || w == 0)
+}
+
+#[inline]
+/**
+Calculates Percentile rank using the following formula
+
+PR = (CF - (0.5 * F)) * 100 / N
+
+where
+**CF**—the cumulative frequency—is the count of all scores less than or equal to the score of interest,
+**F** is the frequency for the score of interest, and
+**N** is the number of scores in the distribution
+
+https://en.wikipedia.org/wiki/Percentile_rank
+ */
+fn calculate_percentile(cf: usize, f: usize, total: usize) -> f32 {
+    // cf, f, total
+    ((cf as f32 - f as f32 / 2.) / total as f32) * 100.
+}
+
+#[test]
+fn test_calculate_percentile() {
+    assert_eq!(
+        calculate_percentile(10, 2, 10), 90.
+    );
+    assert_eq!(
+        calculate_percentile(8, 3, 10), 65.
+    );
+    assert_eq!(
+        calculate_percentile(5, 5, 10), 25.
+    );
+}
+
+fn config_logger(parallel_run: i32) -> Result<Handle, SetLoggerError> {
+    let logfile = FileAppender::builder()
+        .encoder(Box::new(PatternEncoder::new("{l} - {m}\n")))
+        .build("report/output.log").unwrap();
+    let console = ConsoleAppender::builder()
+        .encoder(Box::new(PatternEncoder::new("{l} - {m}\n")))
+        .build();
+    let mut root_builder = Root::builder();
+    let mut config = Config::builder()
+        .appender(Appender::builder().build("logfile", Box::new(logfile)));
+    if parallel_run == 0 {
+        config = config.appender(Appender::builder().build("console", Box::new(console)));
+        root_builder = root_builder.appender("console");
+    }
+    let c = config.build(root_builder.appender("logfile").build(LevelFilter::Info));
+    log4rs::init_config(c.unwrap())
 }
 

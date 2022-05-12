@@ -29,7 +29,7 @@ pub struct SimulationPref {
     /** mutation rate for parasites */
     k: f32,
     /** no additional exposure until after the Lth generation */
-    l: usize,
+    l: i32,
     /** no additional exposure unless less than an M fraction of host (reservation and wild) individuals have been killed */
     m: f32,
     /** host killed if it has a match score with at least X parasite individuals that’s lower than N */
@@ -126,7 +126,7 @@ impl SimulationPref {
     /**
     no additional exposure until after the Lth generation
      */
-    pub fn l(&self) -> usize {
+    pub fn l(&self) -> i32 {
         self.l
     }
 
