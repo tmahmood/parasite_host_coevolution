@@ -15,7 +15,7 @@ use std::ops::Div;
 
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressBar, ProgressIterator, ProgressStyle};
 use log;
-use log::{LevelFilter, SetLoggerError};
+use log::{info, LevelFilter, SetLoggerError};
 use log4rs::{Config, Handle};
 use log4rs::append::console::ConsoleAppender;
 use log4rs::append::file::FileAppender;
@@ -88,7 +88,7 @@ fn main() {
     type UsizeVec = Vec<(Vec<usize>, Vec<usize>)>;
     let now = time::Instant::now();
 
-    println!("Running parallel version, will log to file. {}", program);
+    println!("Running version {}, build 0.1.17", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts = vec![];
@@ -105,12 +105,18 @@ fn main() {
     let reservation_hosts_ar = Array2::from_shape_vec((pref.gg(), pref.ff()), flat_reservation_hosts).unwrap();
     let wild_hosts_ar = Array2::from_shape_vec((pref.gg(), pref.ff()), flat_wild_hosts).unwrap();
 
+
     let mut f = File::create("report/confidence.csv").expect("Unable to create file");
     f.write_all("Generation, Standard Deviation (R), Means (R), High Point (R), Low Point (R), Standard Deviation (W), Means (W), High Point (W), Low Point (W)\n".as_bytes()).expect("Failed to write to file");
 
     let l1 = generate_excel(&reservation_hosts_ar, &pref);
     let l2 = generate_excel(&wild_hosts_ar, &pref);
-    for ii in 0..pref.gg() {
+    assert_eq!(l1.len(), pref.ff());
+    assert_eq!(l2.len(), pref.ff());
+    info!(
+        "{}\n{}\n{:#?}\n{:#?}\n{} {}", reservation_hosts_ar, wild_hosts_ar, l1, l2, l1.len(), l2.len()
+    );
+    for ii in 0..pref.ff() {
         f.write_all(format!("{}, {}, {}\n", ii, l1[ii], l2[ii]).as_bytes()).expect("Failed to write row");
     }
     let last_row_r = reservation_hosts_ar.index_axis(Axis(1), pref.ff() - 1).to_owned();

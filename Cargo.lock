@@ -470,7 +470,7 @@ dependencies = [
 
 [[package]]
 name = "parasite_host_coevolution"
-version = "0.1.0"
+version = "0.1.16"
 dependencies = [
  "futures",
  "indicatif",
