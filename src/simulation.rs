@@ -2,14 +2,9 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::Write;
-use std::num::ParseIntError;
 use std::ops::Div;
 
-use ndarray::{Array, Array1, Array3, ArrayView1, Axis, Ix, Ix1, Ix2, Ix3};
-use ndarray_rand::RandomExt;
-use rand::distributions::Uniform;
-use rayon::iter::ParallelIterator;
-use rayon::prelude::IntoParallelRefIterator;
+use ndarray::{Array, Array1, Array3, Axis, Ix1, Ix3};
 
 use crate::{generate_individual, HostTypes, SimulationPref};
 use crate::hosts::{create_random_hosts, Host};
@@ -121,7 +116,7 @@ pub fn create_random_parasites(pref: &SimulationPref) -> Array3<usize> {
     for _ in 0..pref.d() {
         v.push(generate_individual(pref.f(), pref.g()));
     }
-    Array::from_shape_fn([pref.d(), pref.e(), pref.g()], |(i, j, k)| {
+    Array::from_shape_fn([pref.d(), pref.e(), pref.g()], |(i, _, k)| {
         v[i][k]
     })
 }
@@ -378,7 +373,6 @@ pub struct ReportHostType {
 }
 
 impl ReportHostType {
-
     pub fn new(hosts_count: Array1<usize>) -> Self {
         ReportHostType {
             total_host: hosts_count.sum(),
@@ -491,7 +485,6 @@ impl Display for GGRunReport {
 
 pub fn print_parasites(all_parasites: &Array3<usize>) -> String {
     let mut _s = String::new();
-    let mut i = 0;
     let l1 = all_parasites.len_of(Axis(0));
     let l2 = all_parasites.len_of(Axis(1));
     for ii in 0..l1 {

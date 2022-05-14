@@ -1,11 +1,6 @@
-use std::collections::HashMap;
-use std::fmt::{Display, format, Formatter};
-use std::ptr::write;
+use std::fmt::{Display, Formatter};
 
-use ndarray::{Array, Array1, Ix, Ix1, Ix2};
-use ndarray_rand::RandomExt;
-use rand::{Rng, thread_rng};
-use rand::distributions::{Distribution, Standard, Uniform};
+use ndarray::{Array, Array1};
 use rand::prelude::SliceRandom;
 
 use crate::{generate_individual, SimulationPref};

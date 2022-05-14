@@ -11,30 +11,28 @@ use std::env::args;
 use std::fmt::{Display, Formatter};
 use std::fs::{File, remove_dir_all};
 use std::io::Write;
-use std::ops::Div;
+use std::path::Path;
 
-use indicatif::{MultiProgress, ParallelProgressIterator, ProgressBar, ProgressIterator, ProgressStyle};
+use indicatif::{MultiProgress, ParallelProgressIterator, ProgressBar, ProgressStyle};
 use log;
 use log::{info, LevelFilter, SetLoggerError};
 use log4rs::{Config, Handle};
 use log4rs::append::console::ConsoleAppender;
 use log4rs::append::file::FileAppender;
-use log4rs::append::rolling_file::RollingFileAppender;
 use log4rs::config::{Appender, Root};
 use log4rs::encode::pattern::PatternEncoder;
-use ndarray::{arr2, Array, Array1, Array2, Array3, ArrayBase, ArrayView1, Axis, Ix, Ix1, Ix2, Ix3, OwnedRepr};
+use ndarray::{Array, Array1, Array2, Array3, ArrayBase, Axis, Ix1, Ix2, OwnedRepr};
 use ndarray_rand::RandomExt;
 use rand::{Rng, thread_rng};
 use rand::distributions::{Uniform, WeightedIndex};
 use rand::prelude::*;
 use rayon::prelude::*;
 
-use crate::hosts::{create_random_hosts, Host, HostTypes};
-use crate::simulation::{create_random_parasites, GGRunReport, HostsCount, new_simulation, print_parasites, ProgramVersions, ReportHostType, Simulation};
+use crate::hosts::{Host, HostTypes};
+use crate::simulation::{GGRunReport, new_simulation, print_parasites, ProgramVersions, ReportHostType, Simulation};
 use crate::simulation_pref::SimulationPref;
 
 pub mod simulation_pref;
-pub mod parasites;
 pub mod hosts;
 pub mod simulation;
 
@@ -51,9 +49,6 @@ impl ParasiteSpeciesIndex {
     }
     fn parasite(&self) -> usize {
         self.parasite_index
-    }
-    fn match_count(&self) -> usize {
-        self.match_count
     }
 }
 
@@ -72,7 +67,9 @@ fn main() {
         .progress_chars("##-");
 
 
-    remove_dir_all("report").expect("Failed to remove report directory");
+    if Path::new("report").exists() {
+        remove_dir_all("report").expect("Failed to remove report directory");
+    };
     let param_file = args().nth(1).unwrap_or(format!("params.conf"));
     let program = ProgramVersions::from(args().nth(2).unwrap_or(format!("1")));
     config_logger(1).unwrap();
@@ -85,10 +82,9 @@ fn main() {
     pb_generations.set_style(sty.clone());
     //
 
-    type UsizeVec = Vec<(Vec<usize>, Vec<usize>)>;
     let now = time::Instant::now();
 
-    println!("Running version {}, build 0.1.17", program);
+    println!("Running version {}, build 0.1.18", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts = vec![];
@@ -203,7 +199,7 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
         let host = &hosts[host_index];
         simulation.pv(file_name, &format!("{: <3} {:12}{}\n(species, parasite): match count -> code, \n", host_index, &host.host_type().to_string(), &host.number_set()), true);
         let mut match_score_bellow_threshold = 0;
-        let mut species = species_possible.get_mut(&host_index).unwrap();
+        let species = species_possible.get_mut(&host_index).unwrap();
         for _ in 0..simulation.pref().h() {
             let species_index = species.pop().unwrap();
             let parasite_index = parasites_possible[species_index].pop().unwrap();
@@ -500,7 +496,7 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
     );
 }
 
-pub fn print_matching_number_sets(n1: Array1<usize>, n2: Array1<usize>, species: usize) -> String {
+pub fn print_matching_number_sets(_: Array1<usize>, n2: Array1<usize>, species: usize) -> String {
     let mut s = String::new();
     for _ in 0..species * n2.len() {
         s.push_str("   ");
@@ -560,11 +556,9 @@ fn mutation(simulation: &mut Simulation) {
     let mut mutated_hosts = String::new();
     for (i, host) in simulation.hosts_mut().iter_mut().enumerate() {
         let mut m = host.number_set().clone();
-        let mut changes = 0;
         for cc in 0..c {
             let k = choices[dist.sample(&mut rng)];
             if k == 1 {
-                changes += 1;
                 m[cc] = rng.gen_range(0..f);
             }
         }
@@ -594,7 +588,7 @@ fn parasite_replacement(simulation: &mut Simulation) {
     // find the max value
     let species_match_score = *simulation.species_match_score().iter()
         .max_by(|a, b| a.1.cmp(&b.1))
-        .map(|(k, v)| v)
+        .map(|(_, v)| v)
         .unwrap();
     let mut max_keys: Vec<usize> = simulation.species_match_score().iter()
         .filter(|v| *v.1 == species_match_score)
@@ -615,7 +609,7 @@ fn parasite_replacement(simulation: &mut Simulation) {
 
 
 fn should_continue(simulation: &mut Simulation) -> bool {
-    let (t, r, w) = simulation.count_alive_hosts();
+    let (_, r, w) = simulation.count_alive_hosts();
     !(r == 0 || w == 0)
 }
 
