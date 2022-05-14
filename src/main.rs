@@ -29,7 +29,7 @@ use rand::prelude::*;
 use rayon::prelude::*;
 
 use crate::hosts::{Host, HostTypes};
-use crate::simulation::{GGRunReport, new_simulation, print_parasites, ProgramVersions, ReportHostType, Simulation};
+use crate::simulation::{GGRunReport, new_simulation, ProgramVersions, ReportHostType, Simulation};
 use crate::simulation_pref::SimulationPref;
 
 pub mod simulation_pref;
@@ -84,7 +84,7 @@ fn main() {
 
     let now = time::Instant::now();
 
-    println!("Running version {}, build 0.1.18", program);
+    println!("Running version {}, build 0.1.18_mutation_fix", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts = vec![];
@@ -119,7 +119,7 @@ fn main() {
     let last_row_w = wild_hosts_ar.index_axis(Axis(1), pref.ff() - 1).to_owned();
     let r = calculate_result((last_row_r, last_row_w), pref.gg());
     println!("{}", r);
-    println!("took {} secs", now.elapsed().as_secs())
+    println!("took {} secs", now.elapsed().as_secs_f32())
 }
 
 fn generate_excel(hosts: &ArrayBase<OwnedRepr<usize>, Ix2>, pref: &SimulationPref) -> Vec<String> {
@@ -549,37 +549,51 @@ fn mutation(simulation: &mut Simulation) {
     let c = simulation.pref().c();
     let f = simulation.pref().f();
     let g = simulation.pref().g();
+    let d = simulation.pref().d();
+    let e = simulation.pref().e();
     let weights: Vec<f32> = (0..simulation.pref().f()).map(|_| simulation.pref().ee()).collect();
     let dist = WeightedIndex::new(&weights).unwrap();
     let choices = [0, 1];
     let mut rng = rand::thread_rng();
     let mut mutated_hosts = String::new();
     for (i, host) in simulation.hosts_mut().iter_mut().enumerate() {
-        let mut m = host.number_set().clone();
+        let m = host.number_set_mut();
         for cc in 0..c {
             let k = choices[dist.sample(&mut rng)];
             if k == 1 {
                 m[cc] = rng.gen_range(0..f);
             }
         }
-        host.set_number_set(m);
-        mutated_hosts.push_str(&format!("{:4} {}\n", i, host.number_set().clone()));
+        mutated_hosts.push_str(&format!("{:4} {}\n", i, host.number_set()));
     }
     simulation.pv("mutated_hosts", &mutated_hosts, true);
+    //
     let weights: Vec<f32> = (0..simulation.pref().f()).map(|_| simulation.pref().k()).collect();
     let dist = WeightedIndex::new(&weights).unwrap();
+    let mut no_changes = 0;
+    let bound = (1. / simulation.pref().k()).round() as i32;
+    let mut cnt = 0;
+    let mut mutated_parasites = String::new();
     for mut parasite in simulation.parasites_mut().rows_mut() {
         for cc in 0..g {
             let k = choices[dist.sample(&mut rng)];
-            if k == 1 {
-                parasite[cc] = rng.gen_range(0..f);
+            if k == 1 && no_changes > bound {
+                let spc = (cnt as f32 / e as f32).floor();
+                mutated_parasites.push_str(&format!("({:3}, {:3}) {} ", spc, cnt % e, parasite));
+                parasite[cc] = loop {
+                    let ll = rng.gen_range(0..f);
+                    if ll != parasite[cc] {
+                        break ll;
+                    }
+                };
+                no_changes = 0;
+                mutated_parasites.push_str(&format!("{}\n", parasite))
             }
+            no_changes += 1;
         }
+        cnt += 1;
     }
-    simulation.pv("mutated_parasites",
-                  &format!("{}",
-                           print_parasites(simulation.parasites())),
-                  true);
+    simulation.pv("mutated_parasites", &format!("{}\n", mutated_parasites), true);
 }
 
 fn parasite_replacement(simulation: &mut Simulation) {

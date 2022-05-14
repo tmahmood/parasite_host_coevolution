@@ -70,6 +70,9 @@ impl Host {
         &self.number_set
     }
 
+    pub fn number_set_mut(&mut self) -> &mut Array1<usize> {
+        &mut self.number_set
+    }
     pub fn alive(&self) -> bool {
         self.alive
     }
