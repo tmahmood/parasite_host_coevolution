@@ -7,7 +7,7 @@ use std::ops::Div;
 use ndarray::{Array, Array1, Array3, Axis, Ix1, Ix3};
 
 use crate::{generate_individual, HostTypes, SimulationPref};
-use crate::hosts::{create_random_hosts, Host};
+use crate::hosts::{create_random_hosts, Host, print_hosts};
 
 #[derive(Copy, Clone)]
 pub enum ProgramVersions {
@@ -129,7 +129,8 @@ pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg
         let g_folder = format!("report/sim_{}", gg);
         create_dir_all(&g_folder).expect("Failed to create directory");
         let mut f = File::create(format!("{}/hosts", g_folder)).expect("Unable to create file");
-        f.write_all(&format!("{:#?}", hosts).to_string().as_bytes()).expect("Unable to write data");
+        print_hosts(&hosts, &mut f);
+        // f.write_all(&format!("{:#?}", hosts).to_string().as_bytes()).expect("Unable to write data");
         let mut f = File::create(format!("{}/parasites", g_folder)).expect("Unable to create file");
         f.write_all(print_parasites(&parasites).as_bytes()).expect("Unable to write data");
         for ff in 0..3 {

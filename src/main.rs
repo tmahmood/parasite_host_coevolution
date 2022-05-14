@@ -29,12 +29,14 @@ use rand::prelude::*;
 use rayon::prelude::*;
 
 use crate::hosts::{Host, HostTypes};
-use crate::simulation::{GGRunReport, new_simulation, ProgramVersions, ReportHostType, Simulation};
+use crate::mutations::{mutate_hosts, mutate_parasites};
+use crate::simulation::{GGRunReport, new_simulation, print_parasites, ProgramVersions, ReportHostType, Simulation};
 use crate::simulation_pref::SimulationPref;
 
 pub mod simulation_pref;
 pub mod hosts;
 pub mod simulation;
+pub mod mutations;
 
 #[derive(Debug, Clone)]
 pub struct ParasiteSpeciesIndex {
@@ -101,17 +103,11 @@ fn main() {
     let reservation_hosts_ar = Array2::from_shape_vec((pref.gg(), pref.ff()), flat_reservation_hosts).unwrap();
     let wild_hosts_ar = Array2::from_shape_vec((pref.gg(), pref.ff()), flat_wild_hosts).unwrap();
 
-
     let mut f = File::create("report/confidence.csv").expect("Unable to create file");
     f.write_all("Generation, Standard Deviation (R), Means (R), High Point (R), Low Point (R), Standard Deviation (W), Means (W), High Point (W), Low Point (W)\n".as_bytes()).expect("Failed to write to file");
 
     let l1 = generate_excel(&reservation_hosts_ar, &pref);
     let l2 = generate_excel(&wild_hosts_ar, &pref);
-    assert_eq!(l1.len(), pref.ff());
-    assert_eq!(l2.len(), pref.ff());
-    info!(
-        "{}\n{}\n{:#?}\n{:#?}\n{} {}", reservation_hosts_ar, wild_hosts_ar, l1, l2, l1.len(), l2.len()
-    );
     for ii in 0..pref.ff() {
         f.write_all(format!("{}, {}, {}\n", ii, l1[ii], l2[ii]).as_bytes()).expect("Failed to write row");
     }
@@ -144,7 +140,7 @@ fn calculate_result(result: (Array1<usize>, Array1<usize>), ff: usize) -> GGRunR
 fn run_generation_step(program: ProgramVersions, gg: usize, pref: SimulationPref) -> (Vec<usize>, Vec<usize>) {
     let mut simulation = new_simulation(pref.clone(), program, gg);
     let mut lines = vec![];
-    (0..pref.ff()).into_iter().map(|_| {
+    (0..pref.ff()).into_iter().map(|ff| {
         expose_all_hosts_to_parasites(&mut simulation);
         additional_exposure(&mut simulation);
         if !should_continue(&mut simulation) {
@@ -154,6 +150,9 @@ fn run_generation_step(program: ProgramVersions, gg: usize, pref: SimulationPref
         parasite_truncation_and_birth(&mut simulation);
         mutation(&mut simulation);
         parasite_replacement(&mut simulation);
+        let _s = print_parasites(&simulation.parasites());
+        simulation.pv("parasites_at_end", &_s, true);
+        info!("completed {} generation", ff);
         simulation.next_generation()
     }).collect_into(&mut lines);
     simulation.write_all();
@@ -218,7 +217,6 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
             //
             let d = parasite_row(&all_parasites, p_idx.species(), p_idx.parasite_index);
             let p_grid = print_matching_number_sets(
-                host.number_set().clone(),
                 d,
                 p_idx.species(),
             );
@@ -291,7 +289,6 @@ pub fn additional_exposure(simulation: &mut Simulation) {
             //
             let d = parasite_row(&all_parasites, p_idx.species(), p_idx.parasite_index);
             let p_grid = print_matching_number_sets(
-                host.number_set().clone(),
                 d,
                 p_idx.species(),
             );
@@ -322,38 +319,25 @@ pub fn birth_hosts(simulation: &mut Simulation) {
                            width = simulation.pref().c() + 57),
                   true);
     //simulation.pv(file_name, , true);
-    loop {
-        // pick up parent host
-        let random_host_index = choices[dist.sample(&mut rng)];
-        let parent_index = match simulation.program_version() {
-            ProgramVersions::One | ProgramVersions::Three => {
-                random_host_selection_v1(&simulation, random_host_index)
-            }
-            ProgramVersions::Two | ProgramVersions::Four => {
-                choices[dist.sample(&mut rng)]
-            }
-        };
-
-        let parent_host = simulation.hosts()[parent_index].clone();
-        let mut index = None;
-        for (ii, host) in simulation.hosts().iter().enumerate() {
-            if !host.alive() {
-                index = Some(ii);
-                break;
-            }
-        }
-        if index == None {
-            panic!("I couldn't find any dead [{}] hosts!", parent_host.host_type());
-        }
-        let host_index = index.unwrap();
-        simulation.pv(file_name, &format!(" {: >4} {: >width$} {:4}\n",
-                                          parent_index,
-                                          parent_host, host_index,
-                                          width = simulation.pref().c() + 13), true);
-        // now we get the host
-        let (total_dead_hosts, _, _) = simulation.update_dead_host(host_index, parent_index);
-        if total_dead_hosts == 0 { break; }
-    }
+    simulation.hosts().clone().into_iter().enumerate()
+        .filter(|(_, host)| !host.alive())
+        .for_each(|(host_index, _)| {
+            let random_host_index = choices[dist.sample(&mut rng)];
+            let parent_index = match simulation.program_version() {
+                ProgramVersions::One | ProgramVersions::Three => {
+                    random_host_selection_v1(&simulation, random_host_index)
+                }
+                ProgramVersions::Two | ProgramVersions::Four => {
+                    choices[dist.sample(&mut rng)]
+                }
+            };
+            let parent_host = simulation.hosts()[parent_index].clone();
+            simulation.pv(file_name, &format!(" {: >4} {: >width$} {:4}\n",
+                                              parent_index,
+                                              parent_host, host_index,
+                                              width = simulation.pref().c() + 13), true);
+            simulation.update_dead_host(host_index, parent_index);
+        });
 }
 
 fn random_host_selection_v1(simulation: &Simulation, random_host_index: usize) -> usize {
@@ -496,7 +480,7 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
     );
 }
 
-pub fn print_matching_number_sets(_: Array1<usize>, n2: Array1<usize>, species: usize) -> String {
+pub fn print_matching_number_sets(n2: Array1<usize>, species: usize) -> String {
     let mut s = String::new();
     for _ in 0..species * n2.len() {
         s.push_str("   ");
@@ -546,55 +530,11 @@ fn find_sum_of_match_score(host_match_score: &HashMap<usize, usize>, hosts: &Arr
 }
 
 fn mutation(simulation: &mut Simulation) {
-    let c = simulation.pref().c();
-    let f = simulation.pref().f();
-    let g = simulation.pref().g();
-    let d = simulation.pref().d();
-    let e = simulation.pref().e();
-    let weights: Vec<f32> = (0..simulation.pref().f()).map(|_| simulation.pref().ee()).collect();
-    let dist = WeightedIndex::new(&weights).unwrap();
-    let choices = [0, 1];
-    let mut rng = rand::thread_rng();
-    let mut mutated_hosts = String::new();
-    for (i, host) in simulation.hosts_mut().iter_mut().enumerate() {
-        let m = host.number_set_mut();
-        for cc in 0..c {
-            let k = choices[dist.sample(&mut rng)];
-            if k == 1 {
-                m[cc] = rng.gen_range(0..f);
-            }
-        }
-        mutated_hosts.push_str(&format!("{:4} {}\n", i, host.number_set()));
-    }
-    simulation.pv("mutated_hosts", &mutated_hosts, true);
     //
-    let weights: Vec<f32> = (0..simulation.pref().f()).map(|_| simulation.pref().k()).collect();
-    let dist = WeightedIndex::new(&weights).unwrap();
-    let mut no_changes = 0;
-    let bound = (1. / simulation.pref().k()).round() as i32;
-    let mut cnt = 0;
-    let mut mutated_parasites = String::new();
-    for mut parasite in simulation.parasites_mut().rows_mut() {
-        for cc in 0..g {
-            let k = choices[dist.sample(&mut rng)];
-            if k == 1 && no_changes > bound {
-                let spc = (cnt as f32 / e as f32).floor();
-                mutated_parasites.push_str(&format!("({:3}, {:3}) {} ", spc, cnt % e, parasite));
-                parasite[cc] = loop {
-                    let ll = rng.gen_range(0..f);
-                    if ll != parasite[cc] {
-                        break ll;
-                    }
-                };
-                no_changes = 0;
-                mutated_parasites.push_str(&format!("{}\n", parasite))
-            }
-            no_changes += 1;
-        }
-        cnt += 1;
-    }
-    simulation.pv("mutated_parasites", &format!("{}\n", mutated_parasites), true);
+    mutate_hosts(simulation);
+    mutate_parasites(simulation);
 }
+
 
 fn parasite_replacement(simulation: &mut Simulation) {
     let mut replaced = 0;
