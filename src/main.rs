@@ -99,7 +99,7 @@ fn main() {
     );
 
     for k in 0..wild_hosts.len() {
-        info!("r: {: >3?}\nw: {: >3?}\n",
+        info!("\nr: {: >3?}\nw: {: >3?}\n",
                  reservation_hosts[k],
                  wild_hosts[k]);
     }
@@ -110,11 +110,10 @@ fn main() {
     let wild_hosts_ar = Array2::from_shape_vec((pref.gg(), pref.ff()), flat_wild_hosts).unwrap();
     //
     for k in 0..wild_hosts.len() {
-        info!("r: {: >3?}\nw: {: >3?}\n",
+        info!("\nr: {: >3?}\nw: {: >3?}\n",
                  reservation_hosts_ar.index_axis(Axis(0), k).as_slice().unwrap(),
                  wild_hosts_ar.index_axis(Axis(0), k).as_slice().unwrap());
     }
-    println!();
     //
     let mut f = File::create("report/confidence.csv").expect("Unable to create file");
     f.write_all("Generation, Standard Deviation (R), Means (R), High Point (R), Low Point (R), \
