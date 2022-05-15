@@ -28,9 +28,9 @@ use rand::distributions::{Uniform, WeightedIndex};
 use rand::prelude::*;
 use rayon::prelude::*;
 
-use crate::hosts::{Host, HostTypes};
+use crate::hosts::{Host, HostTypes, print_hosts};
 use crate::mutations::{mutate_hosts, mutate_parasites};
-use crate::simulation::{GGRunReport, new_simulation, print_parasites, ProgramVersions, ReportHostType, Simulation};
+use crate::simulation::{GGRunReport, HostsCount, new_simulation, print_parasites, ProgramVersions, ReportHostType, Simulation};
 use crate::simulation_pref::SimulationPref;
 
 pub mod simulation_pref;
@@ -98,14 +98,29 @@ fn main() {
         &mut reservation_hosts,
     );
 
+    for k in 0..wild_hosts.len() {
+        info!("r: {: >3?}\nw: {: >3?}\n",
+                 reservation_hosts[k],
+                 wild_hosts[k]);
+    }
+
     let flat_wild_hosts: Vec<usize> = wild_hosts.iter().flatten().cloned().collect();
     let flat_reservation_hosts: Vec<usize> = reservation_hosts.iter().flatten().cloned().collect();
     let reservation_hosts_ar = Array2::from_shape_vec((pref.gg(), pref.ff()), flat_reservation_hosts).unwrap();
     let wild_hosts_ar = Array2::from_shape_vec((pref.gg(), pref.ff()), flat_wild_hosts).unwrap();
-
+    //
+    for k in 0..wild_hosts.len() {
+        info!("r: {: >3?}\nw: {: >3?}\n",
+                 reservation_hosts_ar.index_axis(Axis(0), k).as_slice().unwrap(),
+                 wild_hosts_ar.index_axis(Axis(0), k).as_slice().unwrap());
+    }
+    println!();
+    //
     let mut f = File::create("report/confidence.csv").expect("Unable to create file");
-    f.write_all("Generation, Standard Deviation (R), Means (R), High Point (R), Low Point (R), Standard Deviation (W), Means (W), High Point (W), Low Point (W)\n".as_bytes()).expect("Failed to write to file");
-
+    f.write_all("Generation, Standard Deviation (R), Means (R), High Point (R), Low Point (R), \
+    Standard Deviation (W), Means (W), High Point (W), Low Point (W)\n".as_bytes())
+        .expect("Failed to write to file");
+    //
     let l1 = generate_excel(&reservation_hosts_ar, &pref);
     let l2 = generate_excel(&wild_hosts_ar, &pref);
     for ii in 0..pref.ff() {
@@ -115,6 +130,7 @@ fn main() {
     let last_row_w = wild_hosts_ar.index_axis(Axis(1), pref.ff() - 1).to_owned();
     let r = calculate_result((last_row_r, last_row_w), pref.gg());
     println!("{}", r);
+    info!("{}", r);
     println!("took {} secs", now.elapsed().as_secs_f32())
 }
 
@@ -137,14 +153,29 @@ fn calculate_result(result: (Array1<usize>, Array1<usize>), ff: usize) -> GGRunR
     report_gen
 }
 
+fn fill_host(simulation: &mut Simulation) -> HostsCount {
+    let mut k = simulation.next_generation();
+    if k.wild_host == 0 {
+        k.reservation_host = simulation.pref().a() + simulation.pref().b();
+    } else {
+        k.wild_host = simulation.pref().a() + simulation.pref().b();
+    }
+    return k;
+}
+
 fn run_generation_step(program: ProgramVersions, gg: usize, pref: SimulationPref) -> (Vec<usize>, Vec<usize>) {
     let mut simulation = new_simulation(pref.clone(), program, gg);
     let mut lines = vec![];
+    let mut simulation_ended = false;
     (0..pref.ff()).into_iter().map(|ff| {
+        if simulation_ended {
+            return fill_host(&mut simulation);
+        }
         expose_all_hosts_to_parasites(&mut simulation);
         additional_exposure(&mut simulation);
         if !should_continue(&mut simulation) {
-            return simulation.next_generation();
+            simulation_ended = true;
+            return fill_host(&mut simulation);
         }
         birth_hosts(&mut simulation);
         parasite_truncation_and_birth(&mut simulation);
@@ -152,6 +183,8 @@ fn run_generation_step(program: ProgramVersions, gg: usize, pref: SimulationPref
         parasite_replacement(&mut simulation);
         let _s = print_parasites(&simulation.parasites());
         simulation.pv("parasites_at_end", &_s, true);
+        let _s = print_hosts(simulation.hosts());
+        simulation.pv("hosts_at_end", &_s, true);
         info!("completed {} generation", ff);
         simulation.next_generation()
     }).collect_into(&mut lines);

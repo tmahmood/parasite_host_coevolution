@@ -1,6 +1,4 @@
 use std::fmt::{Display, Formatter};
-use std::fs::File;
-use std::io::Write;
 
 use ndarray::{Array, Array1};
 use rand::prelude::SliceRandom;
@@ -13,10 +11,12 @@ pub enum HostTypes {
     Wild,
 }
 
-pub fn print_hosts(hosts: &Array1<Host>, f: &mut File) {
+pub fn print_hosts(hosts: &Array1<Host>) -> String {
+    let mut s = String::new();
     for host in hosts.iter().enumerate() {
-        f.write_all(&format!("{:3} {}\n", host.0, host.1).as_bytes()).expect("Unable to write data");
+        s.push_str(&format!("{:3} {}\n", host.0, host.1));
     }
+    s
 }
 
 impl Display for HostTypes {

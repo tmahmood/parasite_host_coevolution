@@ -4,7 +4,7 @@ use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::Write;
 use std::ops::Div;
 
-use ndarray::{Array, Array1, Array3, Axis, Ix1, Ix3};
+use ndarray::{Array, Array1, Array3, Axis, Ix1, Ix2, Ix3};
 
 use crate::{generate_individual, HostTypes, SimulationPref};
 use crate::hosts::{create_random_hosts, Host, print_hosts};
@@ -129,7 +129,8 @@ pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg
         let g_folder = format!("report/sim_{}", gg);
         create_dir_all(&g_folder).expect("Failed to create directory");
         let mut f = File::create(format!("{}/hosts", g_folder)).expect("Unable to create file");
-        print_hosts(&hosts, &mut f);
+        let s = print_hosts(&hosts);
+        f.write_all(s.as_bytes()).expect("Unable to write data");
         // f.write_all(&format!("{:#?}", hosts).to_string().as_bytes()).expect("Unable to write data");
         let mut f = File::create(format!("{}/parasites", g_folder)).expect("Unable to create file");
         f.write_all(print_parasites(&parasites).as_bytes()).expect("Unable to write data");
@@ -137,14 +138,15 @@ pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg
             create_dir_all(format!("{}/{}", g_folder, ff)).expect("Failed to create directory");
         }
     }
+    let initial_simulation_state = SimulationState {
+        hosts,
+        parasites,
+        ..SimulationState::default()
+    };
     Simulation {
         pref: pref.clone(),
-        simulation_state: SimulationState {
-            hosts,
-            parasites,
-            ..SimulationState::default()
-        },
-        generations: vec![],
+        simulation_state: initial_simulation_state.clone(),
+        generations: vec![initial_simulation_state],
         program_version,
         gg,
         log_files: HashMap::new(),
@@ -432,33 +434,29 @@ impl Display for ReportHostType {
 #[derive(Debug)]
 pub struct GGRunReport {
     pub hosts: (Array1<usize>, Array1<usize>),
-    generations: usize,
+    simulations: usize,
     wild_loner: usize,
     reservation_loner: usize,
     high_wild: usize,
     high_reservation: usize,
     tied: usize,
-    total_reservation_host: usize,
-    total_wild_host: usize,
 }
 
 impl GGRunReport {
     pub fn new(hosts: (Array1<usize>, Array1<usize>), ff: usize) -> Self {
         GGRunReport {
             hosts,
-            generations: ff,
+            simulations: ff,
             wild_loner: 0,
             reservation_loner: 0,
             high_wild: 0,
             high_reservation: 0,
             tied: 0,
-            total_reservation_host: 0,
-            total_wild_host: 0,
         }
     }
 
     pub fn calculations(&mut self) {
-        for i in 0..self.generations {
+        for i in 0..self.simulations {
             let r = self.hosts.0[i];
             let w = self.hosts.1[i];
             if r > w { self.high_reservation += 1 }
@@ -466,8 +464,6 @@ impl GGRunReport {
             if r == w { self.tied += 1 }
             if r == 0 { self.wild_loner += 1 }
             if w == 0 { self.reservation_loner += 1 }
-            self.total_reservation_host += r;
-            self.total_wild_host += w
         }
     }
 }
@@ -475,11 +471,11 @@ impl GGRunReport {
 impl Display for GGRunReport {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut _s = String::new();
-        _s.push_str(&format!("- {} runs ended with wild individuals the lone type remaining\n", self.wild_loner));
-        _s.push_str(&format!("- {} runs ended with reservation individuals the lone type remaining\n", self.reservation_loner));
-        _s.push_str(&format!("- {} runs ended with wild individuals a higher quantity than reservation individuals\n", self.high_wild));
-        _s.push_str(&format!("- {} runs ended with reservation individuals a higher quantity than wild individuals\n", self.high_reservation));
-        _s.push_str(&format!("- {} runs ended with the quantities of the two types tied\n", self.tied));
+        _s.push_str(&format!("- {} simulation runs ended with wild individuals the lone type remaining\n", self.wild_loner));
+        _s.push_str(&format!("- {} simulation runs ended with reservation individuals the lone type remaining\n", self.reservation_loner));
+        _s.push_str(&format!("- {} simulation runs ended with wild individuals a higher quantity than reservation individuals\n", self.high_wild));
+        _s.push_str(&format!("- {} simulation runs ended with reservation individuals a higher quantity than wild individuals\n", self.high_reservation));
+        _s.push_str(&format!("- {} simulation runs ended with the quantities of the two types tied\n", self.tied));
         write!(f, "{}", _s)
     }
 }
