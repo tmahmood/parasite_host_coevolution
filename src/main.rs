@@ -86,7 +86,7 @@ fn main() {
 
     let now = time::Instant::now();
 
-    println!("Running version {}, build 0.1.18_mutation_fix", program);
+    println!("Running version {}, build 0.1.19_mutation_bugs", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts = vec![];

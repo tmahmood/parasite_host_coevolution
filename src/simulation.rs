@@ -4,7 +4,7 @@ use std::fs::{create_dir_all, File, OpenOptions};
 use std::io::Write;
 use std::ops::Div;
 
-use ndarray::{Array, Array1, Array3, Axis, Ix1, Ix2, Ix3};
+use ndarray::{Array, Array1, Array3, Axis, Ix1, Ix3};
 
 use crate::{generate_individual, HostTypes, SimulationPref};
 use crate::hosts::{create_random_hosts, Host, print_hosts};
