@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="3401ab5d-0776-4bd2-a493-6de18a60efc3" name="Run Locally" url="http://localhost">
+        <fileTransfer mountedRoot="$USER_HOME$/tmp/staging" accessType="MOUNT" port="0" />
+      </webServer>
+      <webServer id="7d02c12f-b456-4e7c-9c35-db211b9f7ef1" name="Idan">
+        <fileTransfer accessType="SFTP" host="172.104.19.234" port="22" sshConfigId="259b8623-d6d8-4236-8239-3d075f280a05" sshConfig="idan718@172.104.19.234:22 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" keepAliveTimeout="0" passiveMode="true" shareSSLContext="true" isUseRsync="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

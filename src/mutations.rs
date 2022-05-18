@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use ndarray::Axis;
 use rand::distributions::WeightedIndex;
 use rand::prelude::*;
