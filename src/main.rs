@@ -86,7 +86,7 @@ fn main() {
 
     let now = time::Instant::now();
 
-    println!("Running version {}, build 0.1.21_mutation_improvements", program);
+    println!("Running version {}, build 0.1.22_bug_fix", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts = vec![];
@@ -471,10 +471,16 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
         individuals_with_score.get_mut(&match_score).unwrap().push((species.clone(), parasites.clone()));
         cumulative_frequency[*match_score] += 1;
     });
+    simulation.pv(
+        "parasite_trunc_birth",
+        &format!("{:#?}\n{:#?}\n{:#?}", individuals_with_score, cumulative_frequency, frequency),
+        true
+    );
+
     //
     let mut rng = thread_rng();
     //
-    _s.push_str(&format!("{: >6} {: >12} {: >12}\n", "parasite", "killed", "new parent"));
+    _s.push_str(&format!("{:10} {:9} {:10}\n", "parasite", "killed", "new parent"));
     // now calculate the percentile of each match scores
     for i in 1..cumulative_frequency.len() {
         cumulative_frequency[i] += cumulative_frequency[i - 1];
@@ -500,7 +506,7 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
                 //
                 let b = simulation.parasites().index_axis(Axis(0), *s);
                 let v = b.index_axis(Axis(0), parent_parasite_index);
-                _s.push_str(&format!("{:?}   {: >2} {: >2}\n", (s, i), d, v));
+                _s.push_str(&format!("({:3}, {:3}) {} {}\n", s, p, d, v));
                 simulation.update_parasites(*s, *p, parent_parasite_index);
             }
         }
