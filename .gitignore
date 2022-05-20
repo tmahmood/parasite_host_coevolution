@@ -1,2 +1,6 @@
 /target
 /reports
+/report/
+/staging/
+/.idea/webServers.xml
+/.idea/sshConfigs.xml
