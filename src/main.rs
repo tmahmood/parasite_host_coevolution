@@ -273,13 +273,10 @@ pub fn additional_exposure(simulation: &mut Simulation) {
     simulation.pv(file_name, "Additional Exposure\n", true);
     let (_, alive_reservation_hosts, _) = simulation.count_alive_hosts();
     // secondary exposure
-    let secondary_allowed = (simulation.pref().a() + simulation.pref().b()) as f32 * simulation.pref().m();
-    if simulation.current_generation() as i32 <= simulation.pref().l() {
+    if !additional_exposure_selected(simulation, total_dead_hosts) {
         return;
     }
-    if total_dead_hosts > secondary_allowed as usize {
-        return;
-    }
+    simulation.has_additional_exposure();
     simulation.pv(file_name, &format!("{}\n", simulation.current_generation()), true);
     let all_parasites = simulation.parasites().clone();
     let no_of_additional_host = (alive_reservation_hosts as f32 * simulation.pref().aa()).ceil() as usize;
@@ -337,6 +334,26 @@ pub fn additional_exposure(simulation: &mut Simulation) {
     simulation.pv("host_dying_additional_exposure", &format!("{} R({}) W({})", t, r, w), true);
 }
 
+/**
+If
+  1. the current generation is after the Lth generation and if
+  2. less than an M fraction of host individuals (a total of reservation and wild host individuals)
+     have been killed
+ */
+fn additional_exposure_selected(simulation: &mut Simulation, total_dead_hosts: usize) -> bool {
+    // is the current generation is after the Lth generation
+    if simulation.current_generation() as i32 <= simulation.pref().l() {
+        return false;
+    }
+    // less than an M fraction of host individuals (a total of reservation and wild host
+    // individuals) have been killed
+    let m_fraction = (simulation.pref().a() + simulation.pref().b()) as f32 * simulation.pref().m();
+    if total_dead_hosts >= m_fraction as usize {
+        return false;
+    }
+    return true;
+}
+
 pub fn birth_hosts(simulation: &mut Simulation) {
     let file_name = "hosts_birth";
     let (dist, choices) = match simulation.program_version() {
@@ -350,10 +367,11 @@ pub fn birth_hosts(simulation: &mut Simulation) {
                            "index", "host", "target",
                            width = simulation.pref().c() + 57),
                   true);
-    //simulation.pv(file_name, , true);
     simulation.hosts().clone().into_iter().enumerate()
         .filter(|(_, host)| !host.alive())
-        .for_each(|(host_index, _)| {
+        .map(|v| v.0)
+        .collect::<Vec<usize>>().into_iter()
+        .for_each(|host_index| {
             let random_host_index = choices[dist.sample(&mut rng)];
             let parent_index = match simulation.program_version() {
                 ProgramVersions::One | ProgramVersions::Three => {
@@ -389,7 +407,11 @@ fn random_host_selection_v1(simulation: &Simulation, random_host_index: usize) -
 pub fn birth_generation_version_1(simulation: &mut Simulation) -> (WeightedIndex<f32>, Vec<usize>) {
     let (_, no_of_dead_reservation_host, no_of_dead_wild_host) = simulation.count_dead_hosts();
     let (_, no_of_reservation_host_alive, no_of_wild_host_alive) = simulation.count_alive_hosts();
-    let p = if (simulation.current_generation() as i32) < simulation.pref().l() { 0. } else { simulation.pref().p() } as f32;
+    let p = if simulation.additional_exposure() {
+        simulation.pref().p()
+    } else {
+        0.
+    };
     let (chance_reservation, chance_wild) = get_chances_v1(
         no_of_dead_wild_host as f32,
         no_of_reservation_host_alive as f32,
@@ -400,13 +422,17 @@ pub fn birth_generation_version_1(simulation: &mut Simulation) -> (WeightedIndex
         p,
     );
     let choices = vec![0, 1];
-    simulation.pv("hosts_birth", &format!("Birth V1: {}, {}, {:?}\n", chance_reservation, chance_wild, choices), true);
+    simulation.pv("hosts_birth", &format!("Birth V1: p({}), cR ({}), cW({}), choices({:?})\n", p, chance_reservation, chance_wild, choices), true);
     (WeightedIndex::new(vec![chance_wild, chance_reservation]).unwrap(), choices)
 }
 
 pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex<f32>, Vec<usize>) {
-    let p = if (simulation.current_generation() as i32) < simulation.pref().l() { 0. } else { simulation.pref().p() } as f32;
     let (_, no_of_dead_reservation_host, no_of_dead_wild_host) = simulation.count_dead_hosts();
+    let p = if simulation.additional_exposure() {
+        simulation.pref().p()
+    } else {
+        0.0
+    };
     let host_match_score = simulation.simulation_state().host_match_score().clone();
     let qr: f32 = find_sum_of_match_score(&host_match_score, simulation.hosts(), HostTypes::Reservation);
     let qw: f32 = find_sum_of_match_score(&host_match_score, simulation.hosts(), HostTypes::Wild);
@@ -428,7 +454,7 @@ pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex
             p,
         )
     }).collect();
-    simulation.pv("hosts_birth", &format!("Birth V2: {:#?}, {:#?}\n", chances, choices), true);
+    simulation.pv("hosts_birth", &format!("Birth V2: p({}), chances({:#?}), choices({:#?})\n", p, chances, choices), true);
     (WeightedIndex::new(chances).unwrap(), choices)
 }
 
@@ -471,11 +497,6 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
         individuals_with_score.get_mut(&match_score).unwrap().push((species.clone(), parasites.clone()));
         cumulative_frequency[*match_score] += 1;
     });
-    simulation.pv(
-        "parasite_trunc_birth",
-        &format!("{:#?}\n{:#?}\n{:#?}", individuals_with_score, cumulative_frequency, frequency),
-        true
-    );
 
     //
     let mut rng = thread_rng();
@@ -494,11 +515,15 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
         if percentile >= simulation.pref().bb() {
             // get all the parasites that were used
             let parasites = individuals_with_score.get(&i).unwrap();
+            let mut already_tried = vec![];
             for (s, p) in parasites {
                 // get random existing parasite from the same species (s), excluding this parasite (i)
                 let parent_parasite_index = loop {
                     let i1 = rng.gen_range(0..simulation.pref().e());
-                    if i1 != *p { break i1; }
+                    if i1 != *p && !already_tried.contains(&i1) {
+                        already_tried.push(i1);
+                        break i1;
+                    }
                 };
                 // only for print
                 let b = simulation.parasites().index_axis(Axis(0), *s);

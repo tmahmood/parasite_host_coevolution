@@ -52,6 +52,20 @@ pub struct Simulation {
 }
 
 impl Simulation {
+    pub(crate) fn additional_exposure(&self) -> bool {
+        self.simulation_state.additional_exposure
+    }
+
+    pub(crate) fn has_additional_exposure(&mut self) {
+        self.simulation_state.additional_exposure = true;
+    }
+
+    pub(crate) fn set_additional_exposure(&mut self, s: bool) {
+        self.simulation_state.additional_exposure = s;
+    }
+}
+
+impl Simulation {
     pub(crate) fn parasites_possible(&self) -> Vec<Vec<usize>> {
         self.simulation_state.parasites_possible.clone()
     }
@@ -76,6 +90,7 @@ pub struct SimulationState {
     host_match_score: HashMap<usize, usize>,
     species_left: HashMap<usize, Vec<usize>>,
     parasites_possible: Vec<Vec<usize>>,
+    additional_exposure: bool,
 }
 
 impl Default for SimulationState {
@@ -89,6 +104,7 @@ impl Default for SimulationState {
             host_match_score: Default::default(),
             species_left: Default::default(),
             parasites_possible: vec![],
+            additional_exposure: false
         }
     }
 }
