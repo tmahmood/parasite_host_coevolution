@@ -21,7 +21,7 @@ use log4rs::append::console::ConsoleAppender;
 use log4rs::append::file::FileAppender;
 use log4rs::config::{Appender, Root};
 use log4rs::encode::pattern::PatternEncoder;
-use ndarray::{Array, Array1, Array2, Array3, ArrayBase, Axis, Ix1, Ix2, OwnedRepr};
+use ndarray::{Array, Array1, Array2, Array3, ArrayBase, Axis, Ix2, OwnedRepr};
 use ndarray_rand::RandomExt;
 use rand::{Rng, thread_rng};
 use rand::distributions::{Uniform, WeightedIndex};
@@ -72,9 +72,9 @@ fn main() {
     if Path::new("report").exists() {
         remove_dir_all("report").expect("Failed to remove report directory");
     };
-    let param_file = args().nth(1).unwrap_or(format!("params.conf"));
     let program = ProgramVersions::from(args().nth(2).unwrap_or(format!("1")));
     config_logger(1).unwrap();
+    let param_file = args().nth(1).unwrap_or(format!("conf/params.conf"));
     let pref: SimulationPref = serde_ini::from_str(&fs::read_to_string(param_file).unwrap()).unwrap();
     //
     let pb_all_simulation = multi_progress_bar.add(ProgressBar::new(pref.gg() as u64));
@@ -86,18 +86,25 @@ fn main() {
 
     let now = time::Instant::now();
 
-    println!("Running version {}, build 0.1.22_bug_fix", program);
+    println!("Running version {}, build 0.1.24_bug_fix_v2_wrong_figures", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
-    let mut wild_hosts = vec![];
-    let mut reservation_hosts = vec![];
-    (0..pref.gg()).into_par_iter().progress_with(pb_all_simulation).map(move |gg| {
-        run_generation_step(program_clone, gg.clone(), pref_clone)
-    }).unzip_into_vecs(
-        &mut wild_hosts,
-        &mut reservation_hosts,
-    );
-
+    let mut wild_hosts: Vec<Vec<usize>> = vec![];
+    let mut reservation_hosts: Vec<Vec<usize>> = vec![];
+    if option_env!("DEBUG").is_some() {
+        (0..pref.gg()).into_iter().for_each(|gg| {
+            let k = run_generation_step(program_clone, gg.clone(), pref_clone);
+            wild_hosts.push(k.0);
+            reservation_hosts.push(k.1);
+        });
+    } else {
+        (0..pref.gg()).into_par_iter().progress_with(pb_all_simulation).map(move |gg| {
+            run_generation_step(program_clone, gg.clone(), pref_clone)
+        }).unzip_into_vecs(
+            &mut wild_hosts,
+            &mut reservation_hosts,
+        );
+    }
     for k in 0..wild_hosts.len() {
         info!("\nr: {: >3?}\nw: {: >3?}\n",
                  reservation_hosts[k],
@@ -246,6 +253,7 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
             if match_score < simulation.pref().n() {
                 match_score_bellow_threshold += 1;
             }
+            simulation.update_host_match_score_bellow_j(host_index, if match_score < simulation.pref().j() { 1 } else { 0 });
             //
             let d = parasite_row(&all_parasites, p_idx.species(), p_idx.parasite_index);
             let p_grid = print_matching_number_sets(
@@ -315,6 +323,7 @@ pub fn additional_exposure(simulation: &mut Simulation) {
             if match_score < simulation.pref().dd() {
                 match_score_bellow_threshold += 1;
             }
+            simulation.update_host_match_score_bellow_j(host_index, if match_score < simulation.pref().j() { 1 } else { 0 });
             //
             let d = parasite_row(&all_parasites, p_idx.species(), p_idx.parasite_index);
             let p_grid = print_matching_number_sets(
@@ -358,7 +367,10 @@ pub fn birth_hosts(simulation: &mut Simulation) {
     let file_name = "hosts_birth";
     let (dist, choices) = match simulation.program_version() {
         ProgramVersions::One | ProgramVersions::Three => birth_generation_version_1(simulation),
-        ProgramVersions::Two | ProgramVersions::Four => birth_generation_version_2(simulation),
+        ProgramVersions::Two | ProgramVersions::Four => {
+            calculate_qi(simulation);
+            birth_generation_version_2(simulation)
+        }
     };
     let mut rng = thread_rng();
     simulation.pv(file_name,
@@ -389,6 +401,7 @@ pub fn birth_hosts(simulation: &mut Simulation) {
             simulation.update_dead_host(host_index, parent_index);
         });
 }
+
 
 fn random_host_selection_v1(simulation: &Simulation, random_host_index: usize) -> usize {
     let mut rng = thread_rng();
@@ -433,18 +446,21 @@ pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex
     } else {
         0.0
     };
-    let host_match_score = simulation.simulation_state().host_match_score().clone();
-    let qr: f32 = find_sum_of_match_score(&host_match_score, simulation.hosts(), HostTypes::Reservation);
-    let qw: f32 = find_sum_of_match_score(&host_match_score, simulation.hosts(), HostTypes::Wild);
+
+    let qr = simulation.simulation_state().qr();
+    let qw = simulation.simulation_state().qw();
+    let host_match_score_bellow_j = simulation.simulation_state().host_match_scores_bellow_j().clone();
     let choices: Vec<usize> = simulation.hosts().iter().enumerate()
         .filter(|v| v.1.alive())
         .map(|v| v.0)
         .collect();
     let chances: Vec<f32> = choices.iter().map(|v| {
-        let qi = *host_match_score.get(&v).unwrap();
+        let score_bellow_j = *host_match_score_bellow_j.get(&v).unwrap_or(&0);
+        let qi = simulation.pref().hh() - score_bellow_j;
         get_chances_v2(
             simulation.hosts()[*v].host_type(),
-            qi as f32, qr, qw,
+            qi as f32,
+            qr, qw,
             simulation.pref().r() as f32,
             simulation.pref().s() as f32,
             no_of_dead_wild_host as f32,
@@ -458,6 +474,20 @@ pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex
     (WeightedIndex::new(chances).unwrap(), choices)
 }
 
+fn calculate_qi(simulation: &mut Simulation) {
+    let host_match_score_bellow_j = simulation.simulation_state().host_match_scores_bellow_j().clone();
+    let mut qr = 0.;
+    let mut qw = 0.;
+    let hosts = simulation.hosts();
+    host_match_score_bellow_j.iter().for_each(|(index, score)| {
+        match hosts[*index].host_type() {
+            HostTypes::Reservation => qr += simulation.pref().hh() as f32 - *score as f32,
+            HostTypes::Wild => qw += simulation.pref().hh() as f32 - *score as f32
+        }
+    });
+    simulation.ss_mut().set_qr(qr);
+    simulation.ss_mut().set_qw(qw);
+}
 
 pub fn get_chances_v1(v: f32, u: f32, w: f32, y: f32, t: f32, o: f32, p: f32) -> (f32, f32) {
     (
@@ -466,6 +496,20 @@ pub fn get_chances_v1(v: f32, u: f32, w: f32, y: f32, t: f32, o: f32, p: f32) ->
     )
 }
 
+/**
+- Qi=Q_subscript_i=Qi for each surviving host individual is the variable HH minus the number
+      of match scores it has that is below a match threshold,
+      J (J is input at the beginning of the program)
+- Qr=Q_subscript_r=The sum of Qi for every reservation individual remaining alive in the
+      population.
+- Qw=Q_subscript_w=The sum of Qi for every wild individual remaining alive in the population.
+- Lr=L_subscript_r=R\*Kr
+- Lw=L_subscript_w=S\*Kw
+- R=reserve_constant
+- S=wild_constant
+- Kr=K_subscript_r=number of reservation individuals killed this generation
+- Kw=K_subscript_w=number of wild individuals killed this generation
+ */
 pub fn get_chances_v2(host_type: HostTypes, qi: f32, qr: f32, qw: f32, r: f32, s: f32, kr: f32, kw: f32, o: f32, y: f32, p: f32) -> f32 {
     let lr = r * kr;
     let lw = s * kw;
@@ -581,16 +625,6 @@ fn parasite_row(all_parasites: &Array3<usize>, species: usize, parasite: usize) 
     d.index_axis(Axis(0), parasite).to_owned()
 }
 
-fn find_sum_of_match_score(host_match_score: &HashMap<usize, usize>, hosts: &Array<Host, Ix1>, host_type: HostTypes) -> f32 {
-    host_match_score.into_par_iter().fold(|| 0f32, |mut acc, v| {
-        if hosts[*v.0].host_type() == host_type {
-            acc += *v.1 as f32;
-            acc
-        } else {
-            acc
-        }
-    }).sum::<f32>()
-}
 
 fn mutation(simulation: &mut Simulation) {
     //

@@ -51,6 +51,7 @@ pub struct Simulation {
     log_files: HashMap<String, String>,
 }
 
+
 impl Simulation {
     pub(crate) fn additional_exposure(&self) -> bool {
         self.simulation_state.additional_exposure
@@ -60,12 +61,6 @@ impl Simulation {
         self.simulation_state.additional_exposure = true;
     }
 
-    pub(crate) fn set_additional_exposure(&mut self, s: bool) {
-        self.simulation_state.additional_exposure = s;
-    }
-}
-
-impl Simulation {
     pub(crate) fn parasites_possible(&self) -> Vec<Vec<usize>> {
         self.simulation_state.parasites_possible.clone()
     }
@@ -73,103 +68,7 @@ impl Simulation {
     pub(crate) fn set_parasites_possible(&mut self, parasites_possible: Vec<Vec<usize>>) {
         self.simulation_state.parasites_possible = parasites_possible;
     }
-}
 
-impl Simulation {}
-
-
-#[derive(Clone, Debug)]
-pub struct SimulationState {
-    /** parasite scores, key is (Species, Parasite) */
-    match_scores: HashMap<SpeciesParasite, usize>,
-    /** */
-    species_match_score: HashMap<usize, usize>,
-    current_generation: usize,
-    hosts: Array<Host, Ix1>,
-    parasites: Array<usize, Ix3>,
-    host_match_score: HashMap<usize, usize>,
-    species_left: HashMap<usize, Vec<usize>>,
-    parasites_possible: Vec<Vec<usize>>,
-    additional_exposure: bool,
-}
-
-impl Default for SimulationState {
-    fn default() -> Self {
-        SimulationState {
-            match_scores: Default::default(),
-            species_match_score: Default::default(),
-            current_generation: 0,
-            hosts: Default::default(),
-            parasites: Default::default(),
-            host_match_score: Default::default(),
-            species_left: Default::default(),
-            parasites_possible: vec![],
-            additional_exposure: false
-        }
-    }
-}
-
-impl SimulationState {
-    pub fn update_match_store(&mut self, k: (usize, usize), v: usize) -> Option<usize> {
-        if self.match_scores.contains_key(&k) {
-            println!("{}", self.match_scores.get(&k).unwrap());
-        }
-        self.match_scores.insert(k, v)
-    }
-
-    /** parasite scores, key is (Species, Parasite) => Match score */
-    pub fn match_scores(&self) -> &HashMap<(usize, usize), usize> {
-        &self.match_scores
-    }
-
-    pub fn host_match_score(&self) -> &HashMap<usize, usize> {
-        &self.host_match_score
-    }
-}
-
-pub fn create_random_parasites(pref: &SimulationPref) -> Array3<usize> {
-    let mut v = vec![];
-    for _ in 0..pref.d() {
-        v.push(generate_individual(pref.f(), pref.g()));
-    }
-    Array::from_shape_fn([pref.d(), pref.e(), pref.g()], |(i, _, k)| {
-        v[i][k]
-    })
-}
-
-pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg: usize) -> Simulation {
-    let hosts = create_random_hosts(&pref);
-    let parasites = create_random_parasites(&pref);
-    // create log folder
-    if gg < 3 {
-        let g_folder = format!("report/sim_{}", gg);
-        create_dir_all(&g_folder).expect("Failed to create directory");
-        let mut f = File::create(format!("{}/hosts", g_folder)).expect("Unable to create file");
-        let s = print_hosts(&hosts);
-        f.write_all(s.as_bytes()).expect("Unable to write data");
-        // f.write_all(&format!("{:#?}", hosts).to_string().as_bytes()).expect("Unable to write data");
-        let mut f = File::create(format!("{}/parasites", g_folder)).expect("Unable to create file");
-        f.write_all(print_parasites(&parasites).as_bytes()).expect("Unable to write data");
-        for ff in 0..3 {
-            create_dir_all(format!("{}/{}", g_folder, ff)).expect("Failed to create directory");
-        }
-    }
-    let initial_simulation_state = SimulationState {
-        hosts,
-        parasites,
-        ..SimulationState::default()
-    };
-    Simulation {
-        pref: pref.clone(),
-        simulation_state: initial_simulation_state.clone(),
-        generations: vec![initial_simulation_state],
-        program_version,
-        gg,
-        log_files: HashMap::new(),
-    }
-}
-
-impl Simulation {
     pub fn generations(&self) -> &Vec<SimulationState> {
         &self.generations
     }
@@ -183,7 +82,7 @@ impl Simulation {
     }
 
     pub(crate) fn update_host_match_score(&mut self, host_index: usize, inc: usize) {
-        *self.simulation_state.host_match_score.entry(host_index).or_insert(0) += inc;
+        *self.simulation_state.host_match_scores.entry(host_index).or_insert(0) += inc;
     }
 
     pub(crate) fn species_match_score(&self) -> &HashMap<usize, usize> {
@@ -192,6 +91,10 @@ impl Simulation {
 
     pub fn update_species_match_score(&mut self, species_index: usize, match_score: usize) {
         *self.simulation_state.species_match_score.entry(species_index).or_insert(0) += match_score;
+    }
+
+    pub fn update_host_match_score_bellow_j(&mut self, host_index: usize, inc: usize) {
+        *self.simulation_state.host_match_scores_bellow_j.entry(host_index).or_insert(0) += inc;
     }
 
     pub fn pp(&self, file_name: &str, content: &str, txt: bool) {
@@ -331,6 +234,10 @@ impl Simulation {
         &self.simulation_state
     }
 
+    pub fn ss_mut(&mut self) -> &mut SimulationState {
+        &mut self.simulation_state
+    }
+
     pub fn set_simulation_state(&mut self, simulation_state: SimulationState) {
         self.simulation_state = simulation_state;
     }
@@ -366,6 +273,48 @@ impl Simulation {
             "csv"
         };
         format!("{}/{}.{}", f_folder, file_name, extension)
+    }
+}
+
+pub fn create_random_parasites(pref: &SimulationPref) -> Array3<usize> {
+    let mut v = vec![];
+    for _ in 0..pref.d() {
+        v.push(generate_individual(pref.f(), pref.g()));
+    }
+    Array::from_shape_fn([pref.d(), pref.e(), pref.g()], |(i, _, k)| {
+        v[i][k]
+    })
+}
+
+pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg: usize) -> Simulation {
+    let hosts = create_random_hosts(&pref);
+    let parasites = create_random_parasites(&pref);
+    // create log folder
+    if gg < 3 {
+        let g_folder = format!("report/sim_{}", gg);
+        create_dir_all(&g_folder).expect("Failed to create directory");
+        let mut f = File::create(format!("{}/hosts", g_folder)).expect("Unable to create file");
+        let s = print_hosts(&hosts);
+        f.write_all(s.as_bytes()).expect("Unable to write data");
+        // f.write_all(&format!("{:#?}", hosts).to_string().as_bytes()).expect("Unable to write data");
+        let mut f = File::create(format!("{}/parasites", g_folder)).expect("Unable to create file");
+        f.write_all(print_parasites(&parasites).as_bytes()).expect("Unable to write data");
+        for ff in 0..3 {
+            create_dir_all(format!("{}/{}", g_folder, ff)).expect("Failed to create directory");
+        }
+    }
+    let initial_simulation_state = SimulationState {
+        hosts,
+        parasites,
+        ..SimulationState::default()
+    };
+    Simulation {
+        pref: pref.clone(),
+        simulation_state: initial_simulation_state.clone(),
+        generations: vec![initial_simulation_state],
+        program_version,
+        gg,
+        log_files: HashMap::new(),
     }
 }
 
@@ -509,4 +458,83 @@ pub fn print_parasites(all_parasites: &Array3<usize>) -> String {
         _s.push_str("\n");
     }
     format!("PARASITES:\n{}", _s)
+}
+
+#[derive(Clone, Debug)]
+pub struct SimulationState {
+    /** parasite scores, key is (Species, Parasite) */
+    match_scores: HashMap<SpeciesParasite, usize>,
+    /** */
+    species_match_score: HashMap<usize, usize>,
+    current_generation: usize,
+    hosts: Array<Host, Ix1>,
+    parasites: Array<usize, Ix3>,
+    host_match_scores: HashMap<usize, usize>,
+    species_left: HashMap<usize, Vec<usize>>,
+    host_match_scores_bellow_j: HashMap<usize, usize>,
+    parasites_possible: Vec<Vec<usize>>,
+    additional_exposure: bool,
+    qr: f32,
+    qw: f32,
+}
+
+impl Default for SimulationState {
+    fn default() -> Self {
+        SimulationState {
+            match_scores: Default::default(),
+            species_match_score: Default::default(),
+            current_generation: 0,
+            hosts: Default::default(),
+            parasites: Default::default(),
+            host_match_scores: Default::default(),
+            species_left: Default::default(),
+            host_match_scores_bellow_j: Default::default(),
+            parasites_possible: vec![],
+            additional_exposure: false,
+            qr: 0.0,
+            qw: 0.0
+        }
+    }
+}
+
+impl SimulationState {
+    pub fn update_match_store(&mut self, k: (usize, usize), v: usize) -> Option<usize> {
+        if self.match_scores.contains_key(&k) {
+            println!("{}", self.match_scores.get(&k).unwrap());
+        }
+        self.match_scores.insert(k, v)
+    }
+
+    /** parasite scores, key is (Species, Parasite) => Match score */
+    pub fn match_scores(&self) -> &HashMap<(usize, usize), usize> {
+        &self.match_scores
+    }
+
+    pub fn host_match_scores(&self) -> &HashMap<usize, usize> {
+        &self.host_match_scores
+    }
+
+    pub fn host_match_scores_bellow_j(&self) -> &HashMap<usize, usize> {
+        &self.host_match_scores_bellow_j
+    }
+
+    pub fn _set_host_match_scores_bellow_j(&mut self, h: HashMap<usize, usize>) {
+        self.host_match_scores_bellow_j = h;
+    }
+
+    pub(crate) fn set_qr(&mut self, qr: f32) {
+        self.qr = qr;
+    }
+
+    pub(crate) fn set_qw(&mut self, qw: f32) {
+        self.qw = qw;
+    }
+
+
+    pub fn qr(&self) -> f32 {
+        self.qr
+    }
+    pub fn qw(&self) -> f32 {
+        self.qw
+    }
 }
