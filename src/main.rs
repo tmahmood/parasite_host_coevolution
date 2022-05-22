@@ -86,7 +86,7 @@ fn main() {
 
     let now = time::Instant::now();
 
-    println!("Running version {}, build 0.1.24_bug_fix_v2_wrong_figures", program);
+    println!("Running version {}, build 0.1.25_bug_fix_v3_freezing", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts: Vec<Vec<usize>> = vec![];
@@ -564,8 +564,8 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
                 // get random existing parasite from the same species (s), excluding this parasite (i)
                 let parent_parasite_index = loop {
                     let i1 = rng.gen_range(0..simulation.pref().e());
-                    if i1 != *p && !already_tried.contains(&i1) {
-                        already_tried.push(i1);
+                    if i1 != *p && !already_tried.contains(&(s, i1)) {
+                        already_tried.push((s, i1));
                         break i1;
                     }
                 };
