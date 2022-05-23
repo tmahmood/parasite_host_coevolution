@@ -86,7 +86,7 @@ fn main() {
 
     let now = time::Instant::now();
 
-    println!("Running version {}, build 0.1.25_bug_fix_v3_freezing", program);
+    println!("Running version {}, build 0.1.27_bug_fix_v2_invalid_weight", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts: Vec<Vec<usize>> = vec![];
@@ -436,7 +436,7 @@ pub fn birth_generation_version_1(simulation: &mut Simulation) -> (WeightedIndex
     );
     let choices = vec![0, 1];
     simulation.pv("hosts_birth", &format!("Birth V1: p({}), cR ({}), cW({}), choices({:?})\n", p, chance_reservation, chance_wild, choices), true);
-    (WeightedIndex::new(vec![chance_wild, chance_reservation]).unwrap(), choices)
+    (WeightedIndex::new(vec![chance_reservation, chance_wild]).unwrap(), choices)
 }
 
 pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex<f32>, Vec<usize>) {
@@ -446,29 +446,29 @@ pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex
     } else {
         0.0
     };
-
+    let hh = simulation.pref().hh();
     let qr = simulation.simulation_state().qr();
     let qw = simulation.simulation_state().qw();
     let host_match_score_bellow_j = simulation.simulation_state().host_match_scores_bellow_j().clone();
+    // select index of the hosts that are alive
     let choices: Vec<usize> = simulation.hosts().iter().enumerate()
         .filter(|v| v.1.alive())
         .map(|v| v.0)
         .collect();
-    let chances: Vec<f32> = choices.iter().map(|v| {
-        let score_bellow_j = *host_match_score_bellow_j.get(&v).unwrap_or(&0);
-        let qi = simulation.pref().hh() - score_bellow_j;
-        get_chances_v2(
-            simulation.hosts()[*v].host_type(),
-            qi as f32,
-            qr, qw,
-            simulation.pref().r() as f32,
-            simulation.pref().s() as f32,
-            no_of_dead_wild_host as f32,
-            no_of_dead_reservation_host as f32,
+    // chances of each hosts that are alive for birth
+    let chances: Vec<f32> = choices.iter().map(|host_index| {
+        let score_bellow_j = *host_match_score_bellow_j.get(&host_index).unwrap();
+        let qi = (hh - score_bellow_j) as f32;
+        let vc = get_chances_v2(
+            simulation.hosts()[*host_index].host_type(),
+            qi, qr, qw,
+            simulation.pref().r() as f32 * no_of_dead_reservation_host as f32,
+            simulation.pref().s() as f32 * no_of_dead_wild_host as f32,
             simulation.pref().o(),
             simulation.pref().y(),
             p,
-        )
+        );
+        if vc < 0. { 0. } else { vc }
     }).collect();
     simulation.pv("hosts_birth", &format!("Birth V2: p({}), chances({:#?}), choices({:#?})\n", p, chances, choices), true);
     (WeightedIndex::new(chances).unwrap(), choices)
@@ -510,9 +510,7 @@ pub fn get_chances_v1(v: f32, u: f32, w: f32, y: f32, t: f32, o: f32, p: f32) ->
 - Kr=K_subscript_r=number of reservation individuals killed this generation
 - Kw=K_subscript_w=number of wild individuals killed this generation
  */
-pub fn get_chances_v2(host_type: HostTypes, qi: f32, qr: f32, qw: f32, r: f32, s: f32, kr: f32, kw: f32, o: f32, y: f32, p: f32) -> f32 {
-    let lr = r * kr;
-    let lw = s * kw;
+pub fn get_chances_v2(host_type: HostTypes, qi: f32, qr: f32, qw: f32, lr: f32, lw: f32, o: f32, y: f32, p: f32) -> f32 {
     match host_type {
         HostTypes::Reservation => qi + (qi / qr) * o * y * lr + qi / (qr + qw) * (1. - o) * y * lr + qi / (qr + qw) * (1. - o) * y * lw - p,
         HostTypes::Wild => qi + qi / (qr + qw) * (1. - o) * y * lr + (qi / qw) * o * y * lw + qi / (qr + qw) * (1. - o) * y * lw

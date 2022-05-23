@@ -9,7 +9,7 @@ use ndarray::{Array, Array1, Array3, Axis, Ix1, Ix3};
 use crate::{generate_individual, HostTypes, SimulationPref};
 use crate::hosts::{create_random_hosts, Host, print_hosts};
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum ProgramVersions {
     One,
     Two,
@@ -42,6 +42,7 @@ impl From<String> for ProgramVersions {
     }
 }
 
+#[derive(Debug)]
 pub struct Simulation {
     pref: SimulationPref,
     simulation_state: SimulationState,
