@@ -86,7 +86,7 @@ fn main() {
 
     let now = time::Instant::now();
 
-    println!("Running version {}, build 0.1.27_bug_fix_v2_invalid_weight", program);
+    println!("Running version {}, build 0.1.27_performance_improvements", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts: Vec<Vec<usize>> = vec![];
@@ -218,18 +218,16 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
     // we are calculating all the random species for each hosts before hand, that way we don't
     // have to calculate it in the loop and most likely it will be optimized, we remove the species
     // that is used, that way we don't have to check for used parasite individual
-    let _species_possible = (0..simulation.pref().d()).collect::<Vec<usize>>();
     let mut species_possible = HashMap::new();
     for i in 0..hosts.len() {
-        let mut k = _species_possible.clone();
+        let mut k = (0..simulation.pref().d()).collect::<Vec<usize>>();
         k.shuffle(&mut rng);
         species_possible.insert(i, k);
     }
     // same with parasites
-    let _parasites_possible = (0..simulation.pref().e()).collect::<Vec<usize>>();
     let mut parasites_possible = vec![];
     for _ in 0..simulation.pref().d() {
-        let mut k = _parasites_possible.clone();
+        let mut k = (0..simulation.pref().e()).collect::<Vec<usize>>();
         k.shuffle(&mut rng);
         parasites_possible.push(k);
     }
@@ -324,12 +322,8 @@ pub fn additional_exposure(simulation: &mut Simulation) {
                 match_score_bellow_threshold += 1;
             }
             simulation.update_host_match_score_bellow_j(host_index, if match_score < simulation.pref().j() { 1 } else { 0 });
-            //
             let d = parasite_row(&all_parasites, p_idx.species(), p_idx.parasite_index);
-            let p_grid = print_matching_number_sets(
-                d,
-                p_idx.species(),
-            );
+            let p_grid = print_matching_number_sets(d, p_idx.species());
             simulation.pv(file_name, &format!("{: >3},{: >3} : {: >2} -> {: >3}\n", p_idx.species(), p_idx.parasite(), match_score, p_grid), true);
             //
         }
