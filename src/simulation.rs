@@ -1,3 +1,4 @@
+use std::collections::btree_map::BTreeMap;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::fs::{create_dir_all, File, OpenOptions};
@@ -8,6 +9,8 @@ use ndarray::{Array, Array1, Array3, Axis, Ix1, Ix3};
 
 use crate::{generate_individual, HostTypes, SimulationPref};
 use crate::hosts::{create_random_hosts, Host, print_hosts};
+
+const PV_LIMIT:usize = 3;
 
 #[derive(Debug, Copy, Clone)]
 pub enum ProgramVersions {
@@ -86,12 +89,15 @@ impl Simulation {
         *self.simulation_state.host_match_scores.entry(host_index).or_insert(0) += inc;
     }
 
-    pub(crate) fn species_match_score(&self) -> &HashMap<usize, usize> {
+    pub(crate) fn species_match_score(&self) -> &BTreeMap<usize, usize> {
         &self.simulation_state.species_match_score
     }
 
     pub fn update_species_match_score(&mut self, species_index: usize, match_score: usize) {
-        *self.simulation_state.species_match_score.entry(species_index).or_insert(0) += match_score;
+        *self.simulation_state
+            .species_match_score
+            .entry(species_index)
+            .or_insert(0) += match_score;
     }
 
     pub fn update_host_match_score_bellow_j(&mut self, host_index: usize, inc: usize) {
@@ -120,7 +126,7 @@ impl Simulation {
     }
 
     pub fn pv(&mut self, file_name: &str, content: &str, txt: bool) {
-        if self.gg() < 3 && self.current_generation() < 3 {
+        if self.gg() < PV_LIMIT && self.current_generation() < PV_LIMIT {
             let file_path = self.get_file_path(file_name, txt, true);
             self.log_files.entry(file_path.clone()).or_insert(String::new()).push_str(content);
         }
@@ -291,7 +297,7 @@ pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg
     let hosts = create_random_hosts(&pref);
     let parasites = create_random_parasites(&pref);
     // create log folder
-    if gg < 3 {
+    if gg < PV_LIMIT {
         let g_folder = format!("report/sim_{}", gg);
         create_dir_all(&g_folder).expect("Failed to create directory");
         let mut f = File::create(format!("{}/hosts", g_folder)).expect("Unable to create file");
@@ -300,7 +306,7 @@ pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg
         // f.write_all(&format!("{:#?}", hosts).to_string().as_bytes()).expect("Unable to write data");
         let mut f = File::create(format!("{}/parasites", g_folder)).expect("Unable to create file");
         f.write_all(print_parasites(&parasites).as_bytes()).expect("Unable to write data");
-        for ff in 0..3 {
+        for ff in 0..PV_LIMIT {
             create_dir_all(format!("{}/{}", g_folder, ff)).expect("Failed to create directory");
         }
     }
@@ -466,7 +472,7 @@ pub struct SimulationState {
     /** parasite scores, key is (Species, Parasite) */
     match_scores: HashMap<SpeciesParasite, usize>,
     /** */
-    species_match_score: HashMap<usize, usize>,
+    species_match_score: BTreeMap<usize, usize>,
     current_generation: usize,
     hosts: Array<Host, Ix1>,
     parasites: Array<usize, Ix3>,
@@ -532,10 +538,12 @@ impl SimulationState {
     }
 
 
+
     pub fn qr(&self) -> f32 {
         self.qr
     }
     pub fn qw(&self) -> f32 {
         self.qw
     }
+
 }
