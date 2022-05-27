@@ -87,7 +87,7 @@ fn main() {
 
     let now = time::Instant::now();
 
-    println!("Running version {}, build 0.1.29_small_bug_fix", program);
+    println!("Running version {}, build 0.1.31_memory_issue_fix", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts: Vec<Vec<usize>> = vec![];
@@ -162,7 +162,11 @@ fn calculate_result(result: (Array1<usize>, Array1<usize>), ff: usize) -> GGRunR
 
 fn fill_host(simulation: &mut Simulation) -> HostsCount {
     let mut k = simulation.next_generation();
-    if k.wild_host == 0 {
+    if k.wild_host== 0 && k.reservation_host == 0 {
+        k.reservation_host = 0;
+        k.wild_host = 0;
+    }
+    else if k.wild_host == 0 {
         k.reservation_host = simulation.pref().a() + simulation.pref().b();
     } else {
         k.wild_host = simulation.pref().a() + simulation.pref().b();
@@ -217,7 +221,7 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
     simulation.pv(file_name, "Initial Exposure\n", true);
     let all_parasites = simulation.parasites().clone();
     let hosts = simulation.hosts().clone();
-    // we are calculating all the random species for each hosts before hand, that way we don't
+    // we are calculating all the random species for each hosts beforehand, that way we don't
     // have to calculate it in the loop and most likely it will be optimized, we remove the species
     // that is used, that way we don't have to check for used parasite individual
     let mut species_possible = HashMap::new();
@@ -445,7 +449,7 @@ pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex
     let hh = simulation.pref().hh();
     let qr = simulation.simulation_state().qr();
     let qw = simulation.simulation_state().qw();
-    let host_match_score_bellow_j = simulation.simulation_state().host_match_scores_bellow_j().clone();
+    let mut qi_values = vec![];
     // select index of the hosts that are alive
     let choices: Vec<usize> = simulation.hosts().iter().enumerate()
         .filter(|v| v.1.alive())
@@ -453,8 +457,9 @@ pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex
         .collect();
     // chances of each hosts that are alive for birth
     let chances: Vec<f32> = choices.iter().map(|host_index| {
-        let score_bellow_j = *host_match_score_bellow_j.get(&host_index).unwrap();
+        let score_bellow_j = *simulation.simulation_state().host_match_scores_bellow_j().get(&host_index).unwrap();
         let qi = (hh - score_bellow_j) as f32;
+        qi_values.push(qi);
         let vc = get_chances_v2(
             simulation.hosts()[*host_index].host_type(),
             qi, qr, qw,
@@ -466,17 +471,20 @@ pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex
         );
         if vc < 0. || vc.is_nan() || vc.is_infinite() { 0. } else { vc }
     }).collect();
-    simulation.pv("hosts_birth", &format!("Birth V2: p({}), chances({:#?}), choices({:#?}) qr({}), qw({})\n", p, chances, choices, qr, qw), true);
+    simulation.pv("hosts_birth",
+                  &format!("Birth V2: p({}), chances({:#?}), choices({:#?}) qr({}), qw({})\nqi: \n{:?}\n{:?}\n",
+                           p, chances, choices, qr, qw, qi_values,
+                           simulation.simulation_state().host_match_scores_bellow_j()
+                  ), true);
     (WeightedIndex::new(chances).unwrap(), choices)
 }
 
 fn calculate_qi(simulation: &mut Simulation) {
-    let host_match_score_bellow_j = simulation.simulation_state().host_match_scores_bellow_j().clone();
     let mut qr = 0.;
     let mut qw = 0.;
     let hosts = simulation.hosts();
 
-    host_match_score_bellow_j.iter()
+    simulation.simulation_state().host_match_scores_bellow_j().iter()
         .filter(|(index, _)| hosts[**index].alive())
         .for_each(|(index, score)| {
             match hosts[*index].host_type() {

@@ -49,7 +49,7 @@ impl From<String> for ProgramVersions {
 pub struct Simulation {
     pref: SimulationPref,
     simulation_state: SimulationState,
-    generations: Vec<SimulationState>,
+    last_generation: SimulationState,
     program_version: ProgramVersions,
     gg: usize,
     log_files: HashMap<String, String>,
@@ -73,8 +73,8 @@ impl Simulation {
         self.simulation_state.parasites_possible = parasites_possible;
     }
 
-    pub fn generations(&self) -> &Vec<SimulationState> {
-        &self.generations
+    pub fn last_generation(&self) -> &SimulationState {
+        &self.last_generation
     }
 
     pub fn set_species_left(&mut self, species_left: HashMap<usize, Vec<usize>>) {
@@ -226,7 +226,7 @@ impl Simulation {
     }
 
     pub fn next_generation(&mut self) -> HostsCount {
-        self.generations.push(self.simulation_state.clone());
+        self.last_generation = self.simulation_state.clone();
         let generation = self.simulation_state.current_generation + 1;
         self.simulation_state = SimulationState {
             hosts: self.simulation_state.hosts.to_owned(),
@@ -252,7 +252,7 @@ impl Simulation {
 
     pub fn get_hosts_count(&self) -> HostsCount {
         let (_, r, w) = self.count_alive_hosts_from_generation(
-            self.generations.last().unwrap()
+            &self.last_generation
         );
         HostsCount {
             wild_host: w,
@@ -318,7 +318,7 @@ pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg
     Simulation {
         pref: pref.clone(),
         simulation_state: initial_simulation_state.clone(),
-        generations: vec![initial_simulation_state],
+        last_generation: initial_simulation_state,
         program_version,
         gg,
         log_files: HashMap::new(),
@@ -434,6 +434,7 @@ impl GGRunReport {
             if r > w { self.high_reservation += 1 }
             if r < w { self.high_wild += 1 }
             if r == w { self.tied += 1 }
+            if r == 0 && w == 0 { continue; }
             if r == 0 { self.wild_loner += 1 }
             if w == 0 { self.reservation_loner += 1 }
         }
