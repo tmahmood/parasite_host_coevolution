@@ -87,7 +87,7 @@ fn main() {
 
     let now = time::Instant::now();
 
-    println!("Running version {}, build 0.1.31_memory_issue_fix", program);
+    println!("Running version {}, build 0.1.32_additional_exp_bug", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts: Vec<Vec<usize>> = vec![];
@@ -257,6 +257,7 @@ pub fn expose_all_hosts_to_parasites(simulation: &mut Simulation) {
             if match_score < simulation.pref().n() {
                 match_score_bellow_threshold += 1;
             }
+            simulation.update_host_match_score_bellow_dd(host_index, if match_score < simulation.pref().dd() { 1 } else { 0 });
             simulation.update_host_match_score_bellow_j(host_index, if match_score < simulation.pref().j() { 1 } else { 0 });
             //
             let d = parasite_row(&all_parasites, p_idx.species(), p_idx.parasite_index);
@@ -310,7 +311,6 @@ pub fn additional_exposure(simulation: &mut Simulation) {
         simulation.pv(file_name, &format!("{: <3} {:12}{}\n(species, parasite): match count -> code, \n", host_index, &host.host_type().to_string(), &host.number_set()), true);
         hosts_to_try += 1;
         // expose to parasite
-        let mut match_score_bellow_threshold = 0;
         for _ in 0..simulation.pref().i() {
             let species_index = species_par_host.get_mut(&host_index).unwrap().pop().unwrap();
             let parasite_index = parasites_possible[species_index].pop().unwrap();
@@ -324,9 +324,7 @@ pub fn additional_exposure(simulation: &mut Simulation) {
             simulation.update_parasites_exposed_to((p_idx.species(), p_idx.parasite()), match_score);
             simulation.update_species_match_score(p_idx.species(), match_score);
             simulation.update_host_match_score(host_index, 1);
-            if match_score < simulation.pref().dd() {
-                match_score_bellow_threshold += 1;
-            }
+            simulation.update_host_match_score_bellow_dd(host_index, if match_score < simulation.pref().dd() { 1 } else { 0 });
             simulation.update_host_match_score_bellow_j(host_index, if match_score < simulation.pref().j() { 1 } else { 0 });
             let d = parasite_row(&all_parasites, p_idx.species(), p_idx.parasite_index);
             let p_grid = print_matching_number_sets(d, p_idx.species());
@@ -334,7 +332,7 @@ pub fn additional_exposure(simulation: &mut Simulation) {
             //
         }
         simulation.pv(file_name, &format!("-------------------------\n"), true);
-        if match_score_bellow_threshold >= simulation.pref().cc() {
+        if *simulation.simulation_state().host_match_scores_bellow_dd().get(&host_index).unwrap() >= simulation.pref().cc() {
             simulation.kill_host(host_index);
             simulation.pv("host_dying_additional_exposure", &format!("{:3} {}\n", host_index, &host.to_string()), true);
         }
@@ -351,16 +349,26 @@ If
  */
 fn additional_exposure_selected(simulation: &mut Simulation, total_dead_hosts: usize) -> bool {
     // is the current generation is after the Lth generation
-    if simulation.current_generation() as i32 <= simulation.pref().l() {
-        return false;
-    }
+    let k = simulation.current_generation() as i32 > simulation.pref().l();
     // less than an M fraction of host individuals (a total of reservation and wild host
     // individuals) have been killed
     let m_fraction = (simulation.pref().a() + simulation.pref().b()) as f32 * simulation.pref().m();
-    if total_dead_hosts >= m_fraction as usize {
-        return false;
+    let l = total_dead_hosts < m_fraction as usize;
+    simulation.pv("additional_exposure_cond_check",
+                  &format!("gen({}), l({}), dead_hosts({}) m fraction({})\n",
+                           simulation.current_generation(),
+                           simulation.pref().l(),
+                           total_dead_hosts,
+                           m_fraction),
+                  true);
+    if k && l {
+        simulation.pv("additional_exposure_cond_check",
+                      "additional exposure selected", true);
+        return true;
     }
-    return true;
+    simulation.pv("additional_exposure_cond_check",
+                  "additional exposure not selected", true);
+    return false;
 }
 
 pub fn birth_hosts(simulation: &mut Simulation) {

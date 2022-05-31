@@ -10,7 +10,7 @@ use ndarray::{Array, Array1, Array3, Axis, Ix1, Ix3};
 use crate::{generate_individual, HostTypes, SimulationPref};
 use crate::hosts::{create_random_hosts, Host, print_hosts};
 
-const PV_LIMIT:usize = 3;
+const PV_LIMIT: usize = 3;
 
 #[derive(Debug, Copy, Clone)]
 pub enum ProgramVersions {
@@ -54,6 +54,8 @@ pub struct Simulation {
     gg: usize,
     log_files: HashMap<String, String>,
 }
+
+impl Simulation {}
 
 
 impl Simulation {
@@ -102,6 +104,10 @@ impl Simulation {
 
     pub fn update_host_match_score_bellow_j(&mut self, host_index: usize, inc: usize) {
         *self.simulation_state.host_match_scores_bellow_j.entry(host_index).or_insert(0) += inc;
+    }
+
+    pub(crate) fn update_host_match_score_bellow_dd(&mut self, host_index: usize, inc: usize) {
+        *self.simulation_state.host_match_scores_bellow_dd.entry(host_index).or_insert(0) += inc;
     }
 
     pub fn pp(&self, file_name: &str, content: &str, txt: bool) {
@@ -480,6 +486,7 @@ pub struct SimulationState {
     host_match_scores: HashMap<usize, usize>,
     species_left: HashMap<usize, Vec<usize>>,
     host_match_scores_bellow_j: HashMap<usize, usize>,
+    host_match_scores_bellow_dd: HashMap<usize, usize>,
     parasites_possible: Vec<Vec<usize>>,
     additional_exposure: bool,
     qr: f32,
@@ -497,10 +504,11 @@ impl Default for SimulationState {
             host_match_scores: Default::default(),
             species_left: Default::default(),
             host_match_scores_bellow_j: Default::default(),
+            host_match_scores_bellow_dd: Default::default(),
             parasites_possible: vec![],
             additional_exposure: false,
             qr: 0.0,
-            qw: 0.0
+            qw: 0.0,
         }
     }
 }
@@ -513,6 +521,9 @@ impl SimulationState {
         self.match_scores.insert(k, v)
     }
 
+    pub(crate) fn host_match_scores_bellow_dd(&self) -> &HashMap<usize, usize> {
+        &self.host_match_scores_bellow_dd
+    }
     /** parasite scores, key is (Species, Parasite) => Match score */
     pub fn match_scores(&self) -> &HashMap<(usize, usize), usize> {
         &self.match_scores
@@ -539,12 +550,10 @@ impl SimulationState {
     }
 
 
-
     pub fn qr(&self) -> f32 {
         self.qr
     }
     pub fn qw(&self) -> f32 {
         self.qw
     }
-
 }
