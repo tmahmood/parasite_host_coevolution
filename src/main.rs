@@ -8,6 +8,7 @@ extern crate serde_derive;
 extern crate serde_ini;
 
 use std::{fs, time};
+use std::cmp::min;
 use std::collections::HashMap;
 use std::env::args;
 use std::fmt::{Display, Formatter};
@@ -79,7 +80,7 @@ fn main() {
     let pb_generations = multi_progress_bar.insert_after(&pb_all_simulation, ProgressBar::new(pref.ff() as u64));
     pb_generations.set_style(sty.clone());
     let now = time::Instant::now();
-    println!("Running version {}, build 0.1.33_additional_exp_p_value", program);
+    println!("Running version {}, build 0.1.34_fix_p_value_version_1", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts: Vec<Vec<usize>> = vec![];
@@ -280,26 +281,23 @@ pub fn additional_exposure(simulation: &mut Simulation) {
         return;
     }
     simulation.has_additional_exposure();
-    simulation.pv(file_name, &format!("{}\n", simulation.current_generation()), true);
+    simulation.pv(file_name, &format!("current generation: {}\n", simulation.current_generation()), true);
     let all_parasites = simulation.parasites().clone();
-    let (_, hosts_alive, _) = simulation.count_alive_hosts();
-    let no_of_additional_host = (hosts_alive as f32 * simulation.pref().aa()).ceil() as usize;
-    simulation.pv(file_name, &format!("Additional Exposure candidate {}\n", no_of_additional_host), true);
+    // let (_, hosts_alive, _) = simulation.count_alive_hosts();
     let mut rng = thread_rng();
     let mut hosts_to_try = 0;
     let mut species_par_host = simulation.species_left();
     let mut parasites_possible = simulation.parasites_possible();
-    let mut tried = HashMap::new();
-    // let alive_hosts: Vec<usize> = simulation.hosts_alive().drain_filter(|v| {
-    //     simulation.host_type(*v) == HostTypes::Reservation
-    // }).collect();
+    let mut alive_hosts: Vec<usize> = simulation.hosts_alive().drain_filter(|v| {
+        simulation.host_type(*v) == HostTypes::Reservation
+    }).collect();
+    alive_hosts.shuffle(&mut rng);
+    let mut no_of_additional_host = (simulation.get_hosts_count().reservation_host as f32 * simulation.pref().aa()).ceil() as usize;
+    no_of_additional_host = min(alive_hosts.len(), no_of_additional_host);
+    simulation.pv(file_name, &format!("Additional Exposure candidate {}\n", no_of_additional_host), true);
     while hosts_to_try < no_of_additional_host {
-        let host_index: usize = rng.gen_range(0..simulation.pref().a() + simulation.pref().b());
+        let host_index: usize = alive_hosts.pop().unwrap();
         let host = simulation.hosts()[host_index].clone();
-        if host.host_type() == HostTypes::Wild || !host.alive() || tried.contains_key(&host_index) {
-            continue;
-        }
-        tried.insert(host_index, 0);
         simulation.pv(file_name, &format!("{: <3} {:12}{}\n(species, parasite): match count -> code, \n", host_index, &host.host_type().to_string(), &host.number_set()), true);
         hosts_to_try += 1;
         // expose to parasite
@@ -381,7 +379,7 @@ pub fn birth_hosts(simulation: &mut Simulation) {
                   &format!("{}\n{: >4} {: <width$} {}\n",
                            simulation.program_version().to_string(),
                            "index", "host", "target",
-                           width = simulation.pref().c() + 57),
+                           width = simulation.pref().c() + 64),
                   true);
     simulation.hosts().clone().into_iter().enumerate()
         .filter(|(_, host)| !host.alive())
