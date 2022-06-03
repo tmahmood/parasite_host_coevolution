@@ -59,9 +59,6 @@ impl Simulation {}
 
 
 impl Simulation {
-    pub(crate) fn additional_exposure(&self) -> bool {
-        self.simulation_state.additional_exposure
-    }
 
     pub(crate) fn has_additional_exposure(&mut self) {
         self.simulation_state.additional_exposure = true;
@@ -163,6 +160,21 @@ impl Simulation {
         &self.simulation_state.hosts
     }
 
+    pub fn get_host(&self, host_index: usize) -> &Host {
+        &self.simulation_state.hosts[host_index]
+    }
+
+    pub fn host_type(&self, host_index: usize) -> HostTypes {
+        self.simulation_state.hosts[host_index].host_type()
+    }
+
+    pub fn hosts_alive(&self) -> Vec<usize> {
+        self.hosts().iter().enumerate()
+            .filter(|v| v.1.alive())
+            .map(|v| v.0)
+            .collect()
+    }
+
     pub fn update_dead_host(&mut self, index: usize, parent_host_index: usize) -> (usize, usize, usize) {
         let (host_type, number_set) = {
             let parent_host = &self.simulation_state.hosts[parent_host_index];
@@ -182,7 +194,7 @@ impl Simulation {
     }
 
     pub fn count_alive_hosts(&self) -> (usize, usize, usize) {
-        self.count_alive_hosts_from_generation(self.simulation_state())
+        self.count_alive_hosts_from_generation(self.ss())
     }
 
     pub fn count_alive_hosts_from_generation(&self, simulation_state: &SimulationState) -> (usize, usize, usize) {
@@ -200,7 +212,7 @@ impl Simulation {
         (count_hosts_alive_reservation + count_hosts_alive_wild, count_hosts_alive_reservation, count_hosts_alive_wild)
     }
 
-    pub fn count_dead_hosts(&mut self) -> (usize, usize, usize) {
+    pub fn count_dead_hosts(&self) -> (usize, usize, usize) {
         let mut count_hosts_dead_reservation = 0;
         let mut count_hosts_dead_wild = 0;
         self.simulation_state.hosts.for_each(|host| {
@@ -234,16 +246,18 @@ impl Simulation {
     pub fn next_generation(&mut self) -> HostsCount {
         self.last_generation = self.simulation_state.clone();
         let generation = self.simulation_state.current_generation + 1;
+        let host_count = self.get_hosts_count();
         self.simulation_state = SimulationState {
             hosts: self.simulation_state.hosts.to_owned(),
             parasites: self.simulation_state.parasites.to_owned(),
             current_generation: generation,
+            host_count: host_count.clone(),
             ..Default::default()
         };
-        self.get_hosts_count()
+        host_count
     }
 
-    pub fn simulation_state(&self) -> &SimulationState {
+    pub fn ss(&self) -> &SimulationState {
         &self.simulation_state
     }
 
@@ -302,14 +316,12 @@ pub fn create_random_parasites(pref: &SimulationPref) -> Array3<usize> {
 pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg: usize) -> Simulation {
     let hosts = create_random_hosts(&pref);
     let parasites = create_random_parasites(&pref);
-    // create log folder
     if gg < PV_LIMIT {
         let g_folder = format!("report/sim_{}", gg);
         create_dir_all(&g_folder).expect("Failed to create directory");
         let mut f = File::create(format!("{}/hosts", g_folder)).expect("Unable to create file");
         let s = print_hosts(&hosts);
         f.write_all(s.as_bytes()).expect("Unable to write data");
-        // f.write_all(&format!("{:#?}", hosts).to_string().as_bytes()).expect("Unable to write data");
         let mut f = File::create(format!("{}/parasites", g_folder)).expect("Unable to create file");
         f.write_all(print_parasites(&parasites).as_bytes()).expect("Unable to write data");
         for ff in 0..PV_LIMIT {
@@ -319,6 +331,10 @@ pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg
     let initial_simulation_state = SimulationState {
         hosts,
         parasites,
+        host_count: HostsCount {
+            reservation_host: pref.a(),
+            wild_host: pref.b(),
+        },
         ..SimulationState::default()
     };
     Simulation {
@@ -491,6 +507,18 @@ pub struct SimulationState {
     additional_exposure: bool,
     qr: f32,
     qw: f32,
+    host_tried: Vec<usize>,
+    host_count: HostsCount,
+}
+
+impl SimulationState {
+    pub(crate) fn add_hosts_tried(&mut self, host_index: usize) {
+        self.host_tried.push(host_index);
+    }
+
+    pub fn hosts_tried(&self) -> &Vec<usize> {
+        &self.host_tried
+    }
 }
 
 impl Default for SimulationState {
@@ -509,11 +537,20 @@ impl Default for SimulationState {
             additional_exposure: false,
             qr: 0.0,
             qw: 0.0,
+            host_tried: vec![],
+            host_count: HostsCount {
+                wild_host: 0,
+                reservation_host: 0
+            }
         }
     }
 }
 
 impl SimulationState {
+    pub fn host_count(&self) -> &HostsCount {
+        &self.host_count
+    }
+
     pub fn update_match_store(&mut self, k: (usize, usize), v: usize) -> Option<usize> {
         if self.match_scores.contains_key(&k) {
             println!("{}", self.match_scores.get(&k).unwrap());
