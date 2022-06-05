@@ -80,7 +80,7 @@ fn main() {
     let pb_generations = multi_progress_bar.insert_after(&pb_all_simulation, ProgressBar::new(pref.ff() as u64));
     pb_generations.set_style(sty.clone());
     let now = time::Instant::now();
-    println!("Running version {}, build 0.1.34_fix_p_value_version_1", program);
+    println!("Running version {}, build 0.1.35_fix_chance_being_same_from_wild_and_reservation_hosts", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts: Vec<Vec<usize>> = vec![];
@@ -99,11 +99,6 @@ fn main() {
             &mut reservation_hosts,
         );
     }
-    for k in 0..wild_hosts.len() {
-        info!("\nr: {: >3?}\nw: {: >3?}\n",
-                 reservation_hosts[k],
-                 wild_hosts[k]);
-    }
 
     let flat_wild_hosts: Vec<usize> = wild_hosts.iter().flatten().cloned().collect();
     let flat_reservation_hosts: Vec<usize> = reservation_hosts.iter().flatten().cloned().collect();
@@ -111,7 +106,7 @@ fn main() {
     let wild_hosts_ar = Array2::from_shape_vec((pref.gg(), pref.ff()), flat_wild_hosts).unwrap();
     //
     for k in 0..wild_hosts.len() {
-        info!("\nr: {: >3?}\nw: {: >3?}\n",
+        info!("\n{}\nr: {: >3?}\nw: {: >3?}\n", k,
                  reservation_hosts_ar.index_axis(Axis(0), k).as_slice().unwrap(),
                  wild_hosts_ar.index_axis(Axis(0), k).as_slice().unwrap());
     }
@@ -130,7 +125,7 @@ fn main() {
     let last_row_w = wild_hosts_ar.index_axis(Axis(1), pref.ff() - 1).to_owned();
     let r = calculate_result((last_row_r, last_row_w), pref.gg());
     println!("{}", r);
-    info!("{}", r);
+    info!("\n{}", r);
     println!("took {} secs", now.elapsed().as_secs_f32())
 }
 
@@ -170,7 +165,7 @@ fn run_generation_step(program: ProgramVersions, gg: usize, pref: SimulationPref
     let mut simulation = new_simulation(pref.clone(), program, gg);
     let mut lines = vec![];
     let mut simulation_ended = false;
-    (0..pref.ff()).into_iter().map(|ff| {
+    (0..pref.ff()).into_iter().map(|_| {
         if simulation_ended {
             return fill_host(&mut simulation);
         }
@@ -188,7 +183,6 @@ fn run_generation_step(program: ProgramVersions, gg: usize, pref: SimulationPref
         simulation.pv("parasites_at_end", &_s, true);
         let _s = print_hosts(simulation.hosts());
         simulation.pv("hosts_at_end", &_s, true);
-        info!("completed {} generation", ff);
         simulation.next_generation()
     }).collect_into(&mut lines);
     simulation.write_all();
@@ -283,7 +277,7 @@ pub fn additional_exposure(simulation: &mut Simulation) {
     simulation.has_additional_exposure();
     simulation.pv(file_name, &format!("current generation: {}\n", simulation.current_generation()), true);
     let all_parasites = simulation.parasites().clone();
-    // let (_, hosts_alive, _) = simulation.count_alive_hosts();
+    let (_, reservation_hosts_alive, _) = simulation.count_alive_hosts();
     let mut rng = thread_rng();
     let mut hosts_to_try = 0;
     let mut species_par_host = simulation.species_left();
@@ -292,7 +286,7 @@ pub fn additional_exposure(simulation: &mut Simulation) {
         simulation.host_type(*v) == HostTypes::Reservation
     }).collect();
     alive_hosts.shuffle(&mut rng);
-    let mut no_of_additional_host = (simulation.get_hosts_count().reservation_host as f32 * simulation.pref().aa()).ceil() as usize;
+    let mut no_of_additional_host = (reservation_hosts_alive as f32 * simulation.pref().aa()).ceil() as usize;
     no_of_additional_host = min(alive_hosts.len(), no_of_additional_host);
     simulation.pv(file_name, &format!("Additional Exposure candidate {}\n", no_of_additional_host), true);
     while hosts_to_try < no_of_additional_host {
@@ -399,7 +393,7 @@ pub fn birth_hosts(simulation: &mut Simulation) {
 pub fn birth_generation_version_1(simulation: &mut Simulation) -> (WeightedIndex<f32>, Vec<usize>) {
     let (_, no_of_dead_reservation_host, no_of_dead_wild_host) = simulation.count_dead_hosts();
     let (_, no_of_reservation_host_alive, no_of_wild_host_alive) = simulation.count_alive_hosts();
-    let chances_p_0 = get_chances_v1(
+    let (chance_reservation_p_0, _w) = get_chances_v1(
         no_of_dead_wild_host as f32,
         no_of_reservation_host_alive as f32,
         no_of_dead_reservation_host as f32,
@@ -408,7 +402,7 @@ pub fn birth_generation_version_1(simulation: &mut Simulation) -> (WeightedIndex
         simulation.pref().o(),
         0.,
     );
-    let chances = get_chances_v1(
+    let (chance_reservation_p, chance_wild) = get_chances_v1(
         no_of_dead_wild_host as f32,
         no_of_reservation_host_alive as f32,
         no_of_dead_reservation_host as f32,
@@ -421,8 +415,7 @@ pub fn birth_generation_version_1(simulation: &mut Simulation) -> (WeightedIndex
     simulation.pv("hosts_birth", "Birth V1\n", true);
     let choices: Vec<usize> = simulation.hosts_alive();
     // chances of each hosts that are alive for birth
-    simulation.pv("hosts_birth",
-                  &format!("host_index,     host_type,    p,    chance\n"), true);
+    simulation.pv("hosts_birth", &format!("host_index,     host_type,    p,    chance\n"), true);
     let pv = |hi, ht, p, c| -> String {
         format!("{:10},{: >14},{:5},{:10}\n", hi, ht, p, c)
     };
@@ -431,20 +424,27 @@ pub fn birth_generation_version_1(simulation: &mut Simulation) -> (WeightedIndex
         match simulation.hosts()[*host_index].host_type() {
             HostTypes::Reservation => {
                 return if simulation.ss().hosts_tried().contains(host_index) {
-                    simulation.pv("hosts_birth", &pv(host_index, "Reservation", simulation.pref().p(), chances.0), true);
-                    chances.0
+                    simulation.pv("hosts_birth", &pv(host_index, "Reservation", simulation.pref().p(), chance_reservation_p), true);
+                    chance_reservation_p
                 } else {
-                    simulation.pv("hosts_birth", &pv(host_index, "Reservation", 0., chances_p_0.0), true);
-                    chances_p_0.0
+                    simulation.pv("hosts_birth", &pv(host_index, "Reservation", 0., chance_reservation_p_0), true);
+                    chance_reservation_p_0
                 };
             }
             HostTypes::Wild => {
-                simulation.pv("hosts_birth", &pv(host_index, "Wild", 0., chances.0), true);
-                chances_p_0.1
+                simulation.pv("hosts_birth", &pv(host_index, "Wild", 0., chance_wild), true);
+                chance_wild
             }
         }
     }).collect();
     (WeightedIndex::new(chances).unwrap(), choices)
+}
+
+pub fn get_chances_v1(v: f32, u: f32, w: f32, y: f32, t: f32, o: f32, p: f32) -> (f32, f32) {
+    (
+        (1. + o * y * w / u + (1. - o) * y * w / (t + u) + (1. - o) * y * v / (t + u) - p),  // for reservation host individuals
+        (1. + o * y * v / t + (1. - o) * y * v / (t + u) + (1. - o) * y * w / (t + u)), // for wild host individuals
+    )
 }
 
 pub fn birth_generation_version_2(simulation: &mut Simulation) -> (WeightedIndex<f32>, Vec<usize>) {
@@ -503,13 +503,6 @@ fn calculate_qi(simulation: &mut Simulation) {
         });
     simulation.ss_mut().set_qr(qr);
     simulation.ss_mut().set_qw(qw);
-}
-
-pub fn get_chances_v1(v: f32, u: f32, w: f32, y: f32, t: f32, o: f32, p: f32) -> (f32, f32) {
-    (
-        (1. + o * y * w / u + (1. - o) * y * w / (t + u) + (1. - o) * y * v / (t + u) - p),  // for reservation host individuals
-        (1. + o * y * v / t + (1. - o) * y * v / (t + u) + (1. - o) * y * w / (t + u)), // for wild host individuals
-    )
 }
 
 /**

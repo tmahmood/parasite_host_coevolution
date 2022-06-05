@@ -247,6 +247,7 @@ impl Simulation {
         self.last_generation = self.simulation_state.clone();
         let generation = self.simulation_state.current_generation + 1;
         let host_count = self.get_hosts_count();
+        self.pv("hosts_at_end", &format!("alive: wild={} reservation={}", host_count.wild_host, host_count.reservation_host), true);
         self.simulation_state = SimulationState {
             hosts: self.simulation_state.hosts.to_owned(),
             parasites: self.simulation_state.parasites.to_owned(),
