@@ -80,7 +80,7 @@ fn main() {
     let pb_generations = multi_progress_bar.insert_after(&pb_all_simulation, ProgressBar::new(pref.ff() as u64));
     pb_generations.set_style(sty.clone());
     let now = time::Instant::now();
-    println!("Running version {}, build 0.1.35_fix_chance_being_same_from_wild_and_reservation_hosts", program);
+    println!("Running version {}, build 0.1.36_wrong_sort_when_doing_parasite_replacement", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts: Vec<Vec<usize>> = vec![];
@@ -552,7 +552,7 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
     //
     let mut rng = thread_rng();
     //
-    _s.push_str(&format!("{:10} {:9} {:10}\n", "parasite", "killed", "new parent"));
+    _s.push_str(&format!("{:10} {:10}\n", "killed_individual", "parent_individual"));
     // now calculate the percentile of each match scores
     for i in 1..cumulative_frequency.len() {
         cumulative_frequency[i] += cumulative_frequency[i - 1];
@@ -576,13 +576,7 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
                         break i1;
                     }
                 };
-                // only for print
-                let b = simulation.parasites().index_axis(Axis(0), *s);
-                let d = b.index_axis(Axis(0), *p);
-                //
-                let b = simulation.parasites().index_axis(Axis(0), *s);
-                let v = b.index_axis(Axis(0), parent_parasite_index);
-                _s.push_str(&format!("({:3}, {:3}) {} {}\n", s, p, d, v));
+                _s.push_str(&format!("({:3}, {:3})         ({:3}, {:3})\n", s, p, s, parent_parasite_index));
                 simulation.update_parasites(*s, *p, parent_parasite_index);
             }
         }
@@ -661,14 +655,16 @@ fn parasite_replacement(simulation: &mut Simulation) {
     let to_be_replaced = simulation.pref().q();
     // find the max value
     let mut s = String::new();
-    let mut max_keys = simulation.species_match_score().clone();
+    let species_match_score = simulation.species_match_score().clone();
+    let mut max_keys: Vec<(&usize, &usize)> = species_match_score.iter().map(|(k, v)| (v, k)).collect();
+    max_keys.sort();
     while replaced < to_be_replaced {
-        let ky = max_keys.pop_last();
-        if ky.is_none() { break; }
+        let ky = max_keys.pop();
+        if ky.is_none() { break }
+        let (_, species_index) = ky.unwrap();
         let f = simulation.pref().f();
         let g = simulation.pref().g();
-        let species = simulation.parasites_mut()
-            .index_axis_mut(Axis(0), ky.unwrap().0);
+        let species = simulation.parasites_mut().index_axis_mut(Axis(0), *species_index);
         let i = loop {
             let i = generate_individual(f, g);
             if species.index_axis(Axis(0), 1) != i {
@@ -676,13 +672,13 @@ fn parasite_replacement(simulation: &mut Simulation) {
             }
         };
         let mut species = simulation.parasites_mut()
-            .index_axis_mut(Axis(0), ky.unwrap().0);
-        s.push_str(&format!("REPLACE:\n{:#?}\n", species));
+            .index_axis_mut(Axis(0), *species_index);
+        s.push_str(&format!("REPLACE:\n{}\n{:#?}\n", *species_index, species));
         for mut row in species.rows_mut() {
             row.assign(&i);
         }
         replaced += 1;
-        s.push_str(&format!("REPLACED_WITH:\n{:#?}\n", species));
+        s.push_str(&format!("REPLACED_WITH:\n{}\n{:#?}\n", i, species));
     }
     simulation.pv("replaced_parasites", &s, true)
 }
