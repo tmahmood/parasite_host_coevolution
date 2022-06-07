@@ -80,7 +80,7 @@ fn main() {
     let pb_generations = multi_progress_bar.insert_after(&pb_all_simulation, ProgressBar::new(pref.ff() as u64));
     pb_generations.set_style(sty.clone());
     let now = time::Instant::now();
-    println!("Running version {}, build 0.1.36_wrong_sort_when_doing_parasite_replacement", program);
+    println!("Running version {}, build 0.1.37_added_some_details_in_parasite_birth_and_replacement", program);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts: Vec<Vec<usize>> = vec![];
@@ -552,7 +552,7 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
     //
     let mut rng = thread_rng();
     //
-    _s.push_str(&format!("{:10} {:10}\n", "killed_individual", "parent_individual"));
+    _s.push_str(&format!("{:width$} {:10}\n", "killed_individual", "parent_individual", width=26 + simulation.pref().g()));
     // now calculate the percentile of each match scores
     for i in 1..cumulative_frequency.len() {
         cumulative_frequency[i] += cumulative_frequency[i - 1];
@@ -576,7 +576,9 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
                         break i1;
                     }
                 };
-                _s.push_str(&format!("({:3}, {:3})         ({:3}, {:3})\n", s, p, s, parent_parasite_index));
+                let p1 = parasite_row(simulation.parasites(), *s, *p);
+                let p2 = parasite_row(simulation.parasites(), *s, parent_parasite_index);
+                _s.push_str(&format!("({:3}, {:3}) {}        ({:3}, {:3}) {}\n", s, p, p1, s, parent_parasite_index, p2));
                 simulation.update_parasites(*s, *p, parent_parasite_index);
             }
         }
@@ -658,10 +660,12 @@ fn parasite_replacement(simulation: &mut Simulation) {
     let species_match_score = simulation.species_match_score().clone();
     let mut max_keys: Vec<(&usize, &usize)> = species_match_score.iter().map(|(k, v)| (v, k)).collect();
     max_keys.sort();
+    simulation.pv("replaced_parasites", &format!("{:?}\n", species_match_score), true);
+
     while replaced < to_be_replaced {
         let ky = max_keys.pop();
         if ky.is_none() { break }
-        let (_, species_index) = ky.unwrap();
+        let (score, species_index) = ky.unwrap();
         let f = simulation.pref().f();
         let g = simulation.pref().g();
         let species = simulation.parasites_mut().index_axis_mut(Axis(0), *species_index);
@@ -673,7 +677,7 @@ fn parasite_replacement(simulation: &mut Simulation) {
         };
         let mut species = simulation.parasites_mut()
             .index_axis_mut(Axis(0), *species_index);
-        s.push_str(&format!("REPLACE:\n{}\n{:#?}\n", *species_index, species));
+        s.push_str(&format!("REPLACE:\n{}: Score({})\n{:#?}\n", *species_index, score, species));
         for mut row in species.rows_mut() {
             row.assign(&i);
         }
