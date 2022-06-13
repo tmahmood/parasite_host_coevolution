@@ -18,7 +18,7 @@ use std::path::Path;
 
 use indicatif::{MultiProgress, ParallelProgressIterator, ProgressBar, ProgressStyle};
 use log;
-use log::{info, LevelFilter, SetLoggerError};
+use log::{debug, info, LevelFilter, SetLoggerError};
 use log4rs::{Config, Handle};
 use log4rs::append::console::ConsoleAppender;
 use log4rs::append::file::FileAppender;
@@ -162,27 +162,35 @@ fn fill_host(simulation: &mut Simulation) -> HostsCount {
 }
 
 fn run_generation_step(program: ProgramVersions, gg: usize, pref: SimulationPref) -> (Vec<usize>, Vec<usize>) {
+    debug!("starting simulation");
     let mut simulation = new_simulation(pref.clone(), program, gg);
     let mut lines = vec![];
     let mut simulation_ended = false;
     (0..pref.ff()).into_iter().map(|_| {
         if simulation_ended {
+            debug!("all hosts, or one type of host killed");
             return fill_host(&mut simulation);
         }
+        debug!("exposing hosts to parasite");
         expose_all_hosts_to_parasites(&mut simulation);
         additional_exposure(&mut simulation);
         if !should_continue(&mut simulation) {
             simulation_ended = true;
             return fill_host(&mut simulation);
         }
+        debug!("host birth");
         birth_hosts(&mut simulation);
+        debug!("parasite truncation and birth");
         parasite_truncation_and_birth(&mut simulation);
+        debug!("parasite mutation");
         mutation(&mut simulation);
+        debug!("parasite replacement");
         parasite_replacement(&mut simulation);
         let _s = print_parasites(&simulation.parasites());
         simulation.pv("parasites_at_end", &_s, true);
         let _s = print_hosts(simulation.hosts());
         simulation.pv("hosts_at_end", &_s, true);
+        debug!("starting next generation");
         simulation.next_generation()
     }).collect_into(&mut lines);
     simulation.write_all();
@@ -272,8 +280,10 @@ pub fn additional_exposure(simulation: &mut Simulation) {
     simulation.pv(file_name, "Additional Exposure\n", true);
     // secondary exposure
     if !additional_exposure_selected(simulation, total_dead_hosts) {
+        debug!("additional exposure not selected");
         return;
     }
+    debug!("additional exposure selected");
     simulation.has_additional_exposure();
     simulation.pv(file_name, &format!("current generation: {}\n", simulation.current_generation()), true);
     let all_parasites = simulation.parasites().clone();
@@ -289,6 +299,7 @@ pub fn additional_exposure(simulation: &mut Simulation) {
     let mut no_of_additional_host = (reservation_hosts_alive as f32 * simulation.pref().aa()).ceil() as usize;
     no_of_additional_host = min(alive_hosts.len(), no_of_additional_host);
     simulation.pv(file_name, &format!("Additional Exposure candidate {}\n", no_of_additional_host), true);
+    debug!("exposing additional hosts");
     while hosts_to_try < no_of_additional_host {
         let host_index: usize = alive_hosts.pop().unwrap();
         let host = simulation.hosts()[host_index].clone();
@@ -315,6 +326,7 @@ pub fn additional_exposure(simulation: &mut Simulation) {
             simulation.pv(file_name, &format!("{: >3},{: >3} : {: >2} -> {: >3}\n", p_idx.species(), p_idx.parasite(), match_score, p_grid), true);
             //
         }
+        debug!("done additional exposure");
         simulation.pv(file_name, &format!("-------------------------\n"), true);
         if *simulation.ss().host_match_scores_bellow_dd().get(&host_index).unwrap() >= simulation.pref().cc() {
             simulation.kill_host(host_index);
