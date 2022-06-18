@@ -13,11 +13,46 @@ use crate::hosts::{create_random_hosts, Host, print_hosts};
 const PV_LIMIT: usize = 3;
 
 #[derive(Debug, Copy, Clone)]
+pub enum DeathRule {
+    Default,
+    VersionOne
+}
+
+impl From<String> for DeathRule {
+    fn from(s: String) -> Self {
+        if s.to_lowercase() == "d2" { DeathRule::VersionOne }
+        else { DeathRule::Default }
+    }
+}
+
+impl From<usize> for DeathRule {
+    fn from(s: usize) -> Self {
+        if s == 1 { DeathRule::VersionOne }
+        else { DeathRule::Default }
+    }
+}
+#[derive(Debug, Copy, Clone)]
 pub enum ProgramVersions {
     One,
     Two,
     Three,
     Four,
+    Five,
+    Six,
+    Seven,
+    Eight,
+    Nine,
+    Ten,
+}
+
+impl Display for DeathRule {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            DeathRule::Default => "Default",
+            DeathRule::VersionOne => "Version One"
+        };
+        write!(f, "{}", s)
+    }
 }
 
 pub type SpeciesParasite = (usize, usize);
@@ -29,6 +64,15 @@ impl Display for ProgramVersions {
             ProgramVersions::Two => "Version 2",
             ProgramVersions::Three => "Version 3",
             ProgramVersions::Four => "Version 4",
+
+            ProgramVersions::Five => "Version 5 (V2 + QiV2)",
+            ProgramVersions::Six => "Version 6 (V4 + QiV2)",
+
+            ProgramVersions::Seven => "Version 7 (V2 + QiV3)",
+            ProgramVersions::Eight => "Version 8 (V4 + QiV3)",
+
+            ProgramVersions::Nine => "Version 9 (V2 + QiV4)",
+            ProgramVersions::Ten => "Version 10 (V4 + QiV4)",
         };
         write!(f, "{}", s)
     }
@@ -36,15 +80,31 @@ impl Display for ProgramVersions {
 
 impl From<String> for ProgramVersions {
     fn from(s: String) -> Self {
-        let i = s.parse::<i32>();
-        let v = match i {
+        let i = s.parse::<usize>();
+        let v:usize = match i {
             Ok(v) => v,
             Err(_) => 1
         };
-        if v == 4 { ProgramVersions::Four } else if v == 3 { ProgramVersions::Three } else if v == 2 { ProgramVersions::Two } else { ProgramVersions::One }
+        ProgramVersions::from(v)
     }
 }
 
+impl From<usize> for ProgramVersions {
+    fn from(v: usize) -> Self {
+        match v {
+            2  => ProgramVersions::Two,
+            3  => ProgramVersions::Three,
+            4  => ProgramVersions::Four,
+            5  => ProgramVersions::Five,
+            6  => ProgramVersions::Six,
+            7  => ProgramVersions::Seven,
+            8  => ProgramVersions::Eight,
+            9  => ProgramVersions::Nine,
+            10 => ProgramVersions::Ten,
+            1 | _ => ProgramVersions::One,
+        }
+    }
+}
 #[derive(Debug)]
 pub struct Simulation {
     pref: SimulationPref,
@@ -53,12 +113,15 @@ pub struct Simulation {
     program_version: ProgramVersions,
     gg: usize,
     log_files: HashMap<String, String>,
+    death_rule: DeathRule
 }
 
-impl Simulation {}
-
-
 impl Simulation {
+
+    pub(crate) fn update_host_match_score_bellow_oo(&mut self, host_index: usize, match_score: Option<usize>) {
+        if match_score.is_none() { return; }
+        self.simulation_state.host_match_scores_bellow_oo.entry(host_index).or_insert(vec![]).push(match_score.unwrap());
+    }
 
     pub(crate) fn has_additional_exposure(&mut self) {
         self.simulation_state.additional_exposure = true;
@@ -74,6 +137,10 @@ impl Simulation {
 
     pub fn last_generation(&self) -> &SimulationState {
         &self.last_generation
+    }
+
+    pub fn set_host_individual_qi(&mut self, host_index: usize, qi: f32) {
+        self.simulation_state.qi_host_individual.insert(host_index, qi);
     }
 
     pub fn set_species_left(&mut self, species_left: HashMap<usize, Vec<usize>>) {
@@ -168,6 +235,9 @@ impl Simulation {
         self.simulation_state.hosts[host_index].host_type()
     }
 
+    pub fn is_host_alive(&self, host_index: usize) -> bool {
+        self.simulation_state.hosts[host_index].alive()
+    }
     pub fn hosts_alive(&self) -> Vec<usize> {
         self.hosts().iter().enumerate()
             .filter(|v| v.1.alive())
@@ -302,6 +372,10 @@ impl Simulation {
         };
         format!("{}/{}.{}", f_folder, file_name, extension)
     }
+    pub fn death_rule(&self) -> DeathRule {
+        self.death_rule
+    }
+
 }
 
 pub fn create_random_parasites(pref: &SimulationPref) -> Array3<usize> {
@@ -314,7 +388,7 @@ pub fn create_random_parasites(pref: &SimulationPref) -> Array3<usize> {
     })
 }
 
-pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg: usize) -> Simulation {
+pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg: usize, death_rule: DeathRule) -> Simulation {
     let hosts = create_random_hosts(&pref);
     let parasites = create_random_parasites(&pref);
     if gg < PV_LIMIT {
@@ -345,6 +419,7 @@ pub fn new_simulation(pref: SimulationPref, program_version: ProgramVersions, gg
         program_version,
         gg,
         log_files: HashMap::new(),
+        death_rule
     }
 }
 
@@ -504,13 +579,16 @@ pub struct SimulationState {
     species_left: HashMap<usize, Vec<usize>>,
     host_match_scores_bellow_j: HashMap<usize, usize>,
     host_match_scores_bellow_dd: HashMap<usize, usize>,
+    host_match_scores_bellow_oo: HashMap<usize, Vec<usize>>,
     parasites_possible: Vec<Vec<usize>>,
     additional_exposure: bool,
+    qi_host_individual: HashMap<usize, f32>,
     qr: f32,
     qw: f32,
     host_tried: Vec<usize>,
     host_count: HostsCount,
 }
+
 
 impl SimulationState {
     pub(crate) fn add_hosts_tried(&mut self, host_index: usize) {
@@ -534,15 +612,17 @@ impl Default for SimulationState {
             species_left: Default::default(),
             host_match_scores_bellow_j: Default::default(),
             host_match_scores_bellow_dd: Default::default(),
+            host_match_scores_bellow_oo: Default::default(),
             parasites_possible: vec![],
             additional_exposure: false,
+            qi_host_individual: Default::default(),
             qr: 0.0,
             qw: 0.0,
             host_tried: vec![],
             host_count: HostsCount {
                 wild_host: 0,
-                reservation_host: 0
-            }
+                reservation_host: 0,
+            },
         }
     }
 }
@@ -557,6 +637,10 @@ impl SimulationState {
             println!("{}", self.match_scores.get(&k).unwrap());
         }
         self.match_scores.insert(k, v)
+    }
+
+    pub(crate) fn match_scores_bellow_oo_for_host(&self, host_index: usize) -> &Vec<usize> {
+        &self.host_match_scores_bellow_oo.get(&host_index).unwrap()
     }
 
     pub(crate) fn host_match_scores_bellow_dd(&self) -> &HashMap<usize, usize> {
@@ -574,6 +658,7 @@ impl SimulationState {
     pub fn host_match_scores_bellow_j(&self) -> &HashMap<usize, usize> {
         &self.host_match_scores_bellow_j
     }
+
 
     pub fn _set_host_match_scores_bellow_j(&mut self, h: HashMap<usize, usize>) {
         self.host_match_scores_bellow_j = h;
@@ -593,5 +678,9 @@ impl SimulationState {
     }
     pub fn qw(&self) -> f32 {
         self.qw
+    }
+
+    pub fn qi_host_individual(&self) -> &HashMap<usize, f32> {
+        &self.qi_host_individual
     }
 }
