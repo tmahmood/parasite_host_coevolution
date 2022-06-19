@@ -41,6 +41,7 @@ pub mod simulation_pref;
 pub mod hosts;
 pub mod simulation;
 pub mod mutations;
+pub mod exposure;
 
 #[derive(Debug, Clone)]
 pub struct ParasiteSpeciesIndex {
@@ -88,7 +89,7 @@ fn main() {
     // timer
     let now = time::Instant::now();
     // starting up
-    println!("Running version {} with Death Step {}, build 0.1.38_adding_another_4_versions", program, death_rule);
+    println!("Running version {} with Death Step {}, build 0.1.39_fixing_errors", program, death_rule);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts: Vec<Vec<usize>> = vec![];
@@ -229,7 +230,6 @@ pub fn generate_individual(f: usize, len: usize) -> Array1<usize> {
     Array::random(len, Uniform::new(0, f))
 }
 
-pub mod exposure;
 
 fn kill_host_condition_matched(match_score_bellow_threshold: usize, simulation: &mut Simulation, host_index: usize, is_additional: bool) -> bool {
     match simulation.death_rule() {
@@ -241,19 +241,20 @@ fn kill_host_condition_matched(match_score_bellow_threshold: usize, simulation: 
 // Default kill condition
 pub fn kill_host_condition_v1(match_score_bellow_threshold: usize, simulation: &mut Simulation, is_additional: bool, _: usize) -> bool {
     if is_additional {
-        match_score_bellow_threshold >= simulation.pref().cc()
+        match_score_bellow_threshold < simulation.pref().cc()
     } else {
-        match_score_bellow_threshold >= simulation.pref().x()
+        match_score_bellow_threshold < simulation.pref().x()
     }
 }
 
 // Death to a reservation individual if the total number of unmatched digits is above SS (another
 // variable) and death to a wild individual if the total number of unmatched digits is above
 // TT (another variable).
-pub fn kill_host_condition_v2(match_score_bellow_threshold: usize, simulation: &mut Simulation, _: bool, host_index: usize) -> bool {
+pub fn kill_host_condition_v2(_: usize, simulation: &mut Simulation, _: bool, host_index: usize) -> bool {
+    let match_score = simulation.ss().host_match_scores_all().get(&host_index).unwrap().iter().sum::<usize>();
     match simulation.host_type(host_index) {
-        HostTypes::Reservation => match_score_bellow_threshold > simulation.pref().ss(),
-        HostTypes::Wild => match_score_bellow_threshold > simulation.pref().tt()
+        HostTypes::Reservation => match_score < simulation.pref().ss(),
+        HostTypes::Wild => match_score < simulation.pref().tt()
     }
 }
 
@@ -265,10 +266,10 @@ fn print_exposure_state(all_parasites: &ArrayBase<OwnedRepr<usize>, Ix3>, p_idx:
 fn update_exposure_states(simulation: &mut Simulation, p_idx: &ParasiteSpeciesIndex, host_index: usize, match_score: usize) {
     simulation.update_parasites_exposed_to((p_idx.species(), p_idx.parasite()), match_score);
     simulation.update_species_match_score(p_idx.species(), match_score);
+    simulation.update_host_match_score_all(host_index, match_score);
     simulation.update_host_match_score(host_index, 1);
     simulation.update_host_match_score_bellow_dd(host_index, if match_score < simulation.pref().dd() { 1 } else { 0 });
     simulation.update_host_match_score_bellow_j(host_index, if match_score < simulation.pref().j() { 1 } else { 0 });
-    simulation.update_host_match_score_bellow_oo(host_index, if match_score < simulation.pref().oo() { Some(match_score) } else { None });
 }
 
 /**
@@ -524,7 +525,7 @@ Same as version 2 except Qi ->Q_subscript_i=Qi for each surviving host individua
  another new variable.
  **/
 fn calculate_qi_v2(qi_params: QiParams) -> f32 {
-    let match_scores = qi_params.simulation.ss().match_scores_bellow_oo_for_host(qi_params.host_index);
+    let match_scores = qi_params.simulation.ss().host_match_scores_all().get(&qi_params.host_index).unwrap();
     let oo = qi_params.simulation.pref().oo();
     let jj = qi_params.simulation.pref().jj();
     let nn = match_scores.iter()
@@ -540,7 +541,7 @@ fn calculate_qi_v2(qi_params: QiParams) -> f32 {
 // variable HH times (1-JJ*NN), where JJ is a given input and NN is the total number of match
 // scores under OO.
 fn calculate_qi_v3(qi_params: QiParams) -> f32 {
-    let match_scores = qi_params.simulation.ss().match_scores_bellow_oo_for_host(qi_params.host_index);
+    let match_scores = qi_params.simulation.ss().host_match_scores_all().get(&qi_params.host_index).unwrap();
     let nn = match_scores.iter()
         .filter(|v| **v < qi_params.simulation.pref().oo())
         .count();
@@ -550,11 +551,10 @@ fn calculate_qi_v3(qi_params: QiParams) -> f32 {
 // A version with: Qi for each surviving host individual is the variable HH times (1-JJ*NN),
 // where JJ is a given input and NN is the number of unmatched digits above PP (another variable).
 fn calculate_qi_v4(qi_params: QiParams) -> f32 {
-    let match_scores = qi_params.simulation.ss().match_scores_bellow_oo_for_host(qi_params.host_index);
+    let match_scores = qi_params.simulation.ss().host_match_scores_all().get(&qi_params.host_index).unwrap();
     let pp = qi_params.simulation.pref().pp();
     let jj = qi_params.simulation.pref().jj();
     let c = qi_params.simulation.pref().c();
-
     let nn = c as f32 - match_scores.iter()
         .fold(0., |mut a, v| {
             a += *v as f32;

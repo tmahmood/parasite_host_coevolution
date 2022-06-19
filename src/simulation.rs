@@ -118,9 +118,8 @@ pub struct Simulation {
 
 impl Simulation {
 
-    pub(crate) fn update_host_match_score_bellow_oo(&mut self, host_index: usize, match_score: Option<usize>) {
-        if match_score.is_none() { return; }
-        self.simulation_state.host_match_scores_bellow_oo.entry(host_index).or_insert(vec![]).push(match_score.unwrap());
+    pub(crate) fn update_host_match_score_all(&mut self, host_index: usize, match_score: usize) {
+        self.simulation_state.host_match_scores_all.entry(host_index).or_insert(vec![]).push(match_score);
     }
 
     pub(crate) fn has_additional_exposure(&mut self) {
@@ -576,10 +575,10 @@ pub struct SimulationState {
     hosts: Array<Host, Ix1>,
     parasites: Array<usize, Ix3>,
     host_match_scores: HashMap<usize, usize>,
+    host_match_scores_all: HashMap<usize, Vec<usize>>,
     species_left: HashMap<usize, Vec<usize>>,
     host_match_scores_bellow_j: HashMap<usize, usize>,
     host_match_scores_bellow_dd: HashMap<usize, usize>,
-    host_match_scores_bellow_oo: HashMap<usize, Vec<usize>>,
     parasites_possible: Vec<Vec<usize>>,
     additional_exposure: bool,
     qi_host_individual: HashMap<usize, f32>,
@@ -609,10 +608,10 @@ impl Default for SimulationState {
             hosts: Default::default(),
             parasites: Default::default(),
             host_match_scores: Default::default(),
+            host_match_scores_all: Default::default(),
             species_left: Default::default(),
             host_match_scores_bellow_j: Default::default(),
             host_match_scores_bellow_dd: Default::default(),
-            host_match_scores_bellow_oo: Default::default(),
             parasites_possible: vec![],
             additional_exposure: false,
             qi_host_individual: Default::default(),
@@ -628,6 +627,7 @@ impl Default for SimulationState {
 }
 
 impl SimulationState {
+
     pub fn host_count(&self) -> &HostsCount {
         &self.host_count
     }
@@ -637,10 +637,6 @@ impl SimulationState {
             println!("{}", self.match_scores.get(&k).unwrap());
         }
         self.match_scores.insert(k, v)
-    }
-
-    pub(crate) fn match_scores_bellow_oo_for_host(&self, host_index: usize) -> &Vec<usize> {
-        &self.host_match_scores_bellow_oo.get(&host_index).unwrap()
     }
 
     pub(crate) fn host_match_scores_bellow_dd(&self) -> &HashMap<usize, usize> {
@@ -682,5 +678,9 @@ impl SimulationState {
 
     pub fn qi_host_individual(&self) -> &HashMap<usize, f32> {
         &self.qi_host_individual
+    }
+
+    pub fn host_match_scores_all(&self) -> &HashMap<usize, Vec<usize>> {
+        &self.host_match_scores_all
     }
 }
