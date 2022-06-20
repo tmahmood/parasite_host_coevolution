@@ -89,7 +89,7 @@ fn main() {
     // timer
     let now = time::Instant::now();
     // starting up
-    println!("Running version {} with Death Step {}, build 0.1.39_fixing_errors", program, death_rule);
+    println!("Running version {} with Death Step {}, build 0.1.40.1_bug_fixes_and_other_changes", program, death_rule);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts: Vec<Vec<usize>> = vec![];
@@ -187,32 +187,25 @@ fn run_generation_step(program: ProgramVersions, gg: usize, pref: SimulationPref
     let mut simulation_ended = false;
     (0..pref.ff()).into_iter().map(|_| {
         if simulation_ended {
-            debug!("all hosts, or one type of host killed");
             return fill_host(&mut simulation);
         }
-        debug!("exposing hosts to parasite");
         expose_all_hosts_to_parasites(&mut simulation);
         additional_exposure(&mut simulation);
         if !should_continue(&mut simulation) {
             simulation_ended = true;
             return fill_host(&mut simulation);
         }
-        debug!("host birth");
         if !birth_hosts(&mut simulation) {
             simulation_ended = true;
             return fill_host(&mut simulation);
         }
-        debug!("parasite truncation and birth");
         parasite_truncation_and_birth(&mut simulation);
-        debug!("parasite mutation");
         mutation(&mut simulation);
-        debug!("parasite replacement");
         parasite_replacement(&mut simulation);
         let _s = print_parasites(&simulation.parasites());
         simulation.pv("parasites_at_end", &_s, true);
         let _s = print_hosts(simulation.hosts());
         simulation.pv("hosts_at_end", &_s, true);
-        debug!("starting next generation");
         simulation.next_generation()
     }).collect_into(&mut lines);
     simulation.write_all();
@@ -239,23 +232,28 @@ fn kill_host_condition_matched(match_score_bellow_threshold: usize, simulation: 
 }
 
 // Default kill condition
-pub fn kill_host_condition_v1(match_score_bellow_threshold: usize, simulation: &mut Simulation, is_additional: bool, _: usize) -> bool {
-    if is_additional {
-        match_score_bellow_threshold < simulation.pref().cc()
+pub fn kill_host_condition_v1(match_score_bellow_threshold: usize, simulation: &mut Simulation, is_additional: bool, host_index: usize) -> bool {
+    let test = if is_additional {
+         simulation.pref().cc()
     } else {
-        match_score_bellow_threshold < simulation.pref().x()
-    }
+         simulation.pref().x()
+    };
+    simulation.pv("kill_condition_test", &format!("{: >3} -> {: >3} < {: >3}\n", host_index, match_score_bellow_threshold, test), true);
+    match_score_bellow_threshold < test
 }
 
 // Death to a reservation individual if the total number of unmatched digits is above SS (another
 // variable) and death to a wild individual if the total number of unmatched digits is above
 // TT (another variable).
 pub fn kill_host_condition_v2(_: usize, simulation: &mut Simulation, _: bool, host_index: usize) -> bool {
-    let match_score = simulation.ss().host_match_scores_all().get(&host_index).unwrap().iter().sum::<usize>();
-    match simulation.host_type(host_index) {
-        HostTypes::Reservation => match_score < simulation.pref().ss(),
-        HostTypes::Wild => match_score < simulation.pref().tt()
-    }
+    let g = simulation.pref().g();
+    let match_score = simulation.ss().host_match_scores_all().get(&host_index).unwrap().iter().map(|v| g - v).sum::<usize>();
+    let test = match simulation.host_type(host_index) {
+        HostTypes::Reservation => simulation.pref().ss(),
+        HostTypes::Wild => simulation.pref().tt()
+    };
+    simulation.pv("kill_condition_test", &format!("{: >3} -> {: >3} < {: >3}\n", host_index, match_score, test), true);
+    match_score > test
 }
 
 fn print_exposure_state(all_parasites: &ArrayBase<OwnedRepr<usize>, Ix3>, p_idx: &ParasiteSpeciesIndex) -> String {
@@ -528,12 +526,14 @@ fn calculate_qi_v2(qi_params: QiParams) -> f32 {
     let match_scores = qi_params.simulation.ss().host_match_scores_all().get(&qi_params.host_index).unwrap();
     let oo = qi_params.simulation.pref().oo();
     let jj = qi_params.simulation.pref().jj();
-    let nn = match_scores.iter()
-        .filter(|v| **v < oo)
+    let g = qi_params.simulation.pref().g();
+    let mut nn = match_scores.iter()
+        .filter(|v| g - **v > oo)
         .fold(0., |mut a, v| {
-            a += oo as f32 - *v as f32;
+            a += g as f32 - *v as f32 - oo as f32;
             a
         });
+    if nn < 0. { nn = 0. }
     qi_params.hh as f32 * (1. - (jj as f32 * nn))
 }
 
@@ -554,12 +554,13 @@ fn calculate_qi_v4(qi_params: QiParams) -> f32 {
     let match_scores = qi_params.simulation.ss().host_match_scores_all().get(&qi_params.host_index).unwrap();
     let pp = qi_params.simulation.pref().pp();
     let jj = qi_params.simulation.pref().jj();
-    let c = qi_params.simulation.pref().c();
-    let nn = c as f32 - match_scores.iter()
+    let g = qi_params.simulation.pref().g();
+    let mut nn = match_scores.iter()
         .fold(0., |mut a, v| {
-            a += *v as f32;
+            a += g as f32 - *v as f32;
             a
         }) - pp as f32;
+    if nn < 0. { nn = 0. }
     qi_params.hh as f32 * (1. - (jj as f32 * nn))
 }
 

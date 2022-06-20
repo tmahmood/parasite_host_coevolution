@@ -3,6 +3,20 @@
   <component name="CsvFileAttributes">
     <option name="attributeMap">
       <map>
+        <entry key="/.idea/...bfg-report/2022-05-20/09-11-00/protected-dirt/c8899897-HEAD.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
+        <entry key="/.idea/...bfg-report/2022-05-20/09-11-12/protected-dirt/901484ff-HEAD.csv">
+          <value>
+            <Attribute>
+              <option name="separator" value="," />
+            </Attribute>
+          </value>
+        </entry>
         <entry key="/report/confidence.csv">
           <value>
             <Attribute>
