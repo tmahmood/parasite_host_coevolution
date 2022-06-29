@@ -9,6 +9,7 @@ extern crate serde_derive;
 extern crate serde_ini;
 
 use std::{fs, time};
+use std::collections::btree_map::BTreeMap;
 use std::collections::HashMap;
 use std::env::args;
 use std::fmt::{Display, Formatter};
@@ -32,8 +33,10 @@ use rand::prelude::*;
 use rayon::prelude::*;
 
 use crate::exposure::{additional_exposure, expose_all_hosts_to_parasites};
+use crate::host_death_rules::v1::{additional, initial};
 use crate::hosts::{Host, HostTypes, print_hosts};
 use crate::mutations::{mutate_hosts, mutate_parasites};
+use crate::qi_calculations::calculate_qi;
 use crate::simulation::{DeathRule, GGRunReport, HostsCount, new_simulation, print_parasites, ProgramVersions, ReportHostType, Simulation};
 use crate::simulation_pref::SimulationPref;
 
@@ -42,6 +45,8 @@ pub mod hosts;
 pub mod simulation;
 pub mod mutations;
 pub mod exposure;
+pub mod qi_calculations;
+pub mod host_death_rules;
 
 #[derive(Debug, Clone)]
 pub struct ParasiteSpeciesIndex {
@@ -89,7 +94,7 @@ fn main() {
     // timer
     let now = time::Instant::now();
     // starting up
-    println!("Running version {} with Death Step {}, build 0.1.40.1_bug_fixes_and_other_changes", program, death_rule);
+    println!("Running version {} with Death Step {}, build 0.1.41_new_kill_algo", program, death_rule);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts: Vec<Vec<usize>> = vec![];
@@ -190,7 +195,9 @@ fn run_generation_step(program: ProgramVersions, gg: usize, pref: SimulationPref
             return fill_host(&mut simulation);
         }
         expose_all_hosts_to_parasites(&mut simulation);
+        host_death_rules::v2::initial(&mut simulation);
         additional_exposure(&mut simulation);
+        host_death_rules::v2::additional(&mut simulation);
         if !should_continue(&mut simulation) {
             simulation_ended = true;
             return fill_host(&mut simulation);
@@ -223,83 +230,6 @@ pub fn generate_individual(f: usize, len: usize) -> Array1<usize> {
     Array::random(len, Uniform::new(0, f))
 }
 
-
-fn kill_host_condition_matched(match_score_bellow_threshold: usize, simulation: &mut Simulation, host_index: usize, is_additional: bool) -> bool {
-    match simulation.death_rule() {
-        DeathRule::Default => kill_host_condition_v1(match_score_bellow_threshold, simulation, is_additional, host_index),
-        DeathRule::VersionOne => kill_host_condition_v2(match_score_bellow_threshold, simulation, is_additional, host_index)
-    }
-}
-
-// Default kill condition
-pub fn kill_host_condition_v1(match_score_bellow_threshold: usize, simulation: &mut Simulation, is_additional: bool, host_index: usize) -> bool {
-    let test = if is_additional {
-         simulation.pref().cc()
-    } else {
-         simulation.pref().x()
-    };
-    simulation.pv("kill_condition_test", &format!("{: >3} -> {: >3} < {: >3}\n", host_index, match_score_bellow_threshold, test), true);
-    match_score_bellow_threshold < test
-}
-
-// Death to a reservation individual if the total number of unmatched digits is above SS (another
-// variable) and death to a wild individual if the total number of unmatched digits is above
-// TT (another variable).
-pub fn kill_host_condition_v2(_: usize, simulation: &mut Simulation, _: bool, host_index: usize) -> bool {
-    let g = simulation.pref().g();
-    let match_score = simulation.ss().host_match_scores_all().get(&host_index).unwrap().iter().map(|v| g - v).sum::<usize>();
-    let test = match simulation.host_type(host_index) {
-        HostTypes::Reservation => simulation.pref().ss(),
-        HostTypes::Wild => simulation.pref().tt()
-    };
-    simulation.pv("kill_condition_test", &format!("{: >3} -> {: >3} < {: >3}\n", host_index, match_score, test), true);
-    match_score > test
-}
-
-fn print_exposure_state(all_parasites: &ArrayBase<OwnedRepr<usize>, Ix3>, p_idx: &ParasiteSpeciesIndex) -> String {
-    let d = parasite_row(&all_parasites, p_idx.species(), p_idx.parasite_index);
-    print_matching_number_sets(d, p_idx.species())
-}
-
-fn update_exposure_states(simulation: &mut Simulation, p_idx: &ParasiteSpeciesIndex, host_index: usize, match_score: usize) {
-    simulation.update_parasites_exposed_to((p_idx.species(), p_idx.parasite()), match_score);
-    simulation.update_species_match_score(p_idx.species(), match_score);
-    simulation.update_host_match_score_all(host_index, match_score);
-    simulation.update_host_match_score(host_index, 1);
-    simulation.update_host_match_score_bellow_dd(host_index, if match_score < simulation.pref().dd() { 1 } else { 0 });
-    simulation.update_host_match_score_bellow_j(host_index, if match_score < simulation.pref().j() { 1 } else { 0 });
-}
-
-/**
-If
-  1. the current generation is after the Lth generation and if
-  2. less than an M fraction of host individuals (a total of reservation and wild host individuals)
-     have been killed
- */
-fn additional_exposure_selected(simulation: &mut Simulation, total_dead_hosts: usize) -> bool {
-    // is the current generation is after the Lth generation
-    let k = simulation.current_generation() as i32 > simulation.pref().l();
-    // less than an M fraction of host individuals (a total of reservation and wild host
-    // individuals) have been killed
-    let m_fraction = (simulation.pref().a() + simulation.pref().b()) as f32 * simulation.pref().m();
-    let l = total_dead_hosts < m_fraction as usize;
-    simulation.pv("additional_exposure_cond_check",
-                  &format!("gen({}), l({}), dead_hosts({}) m fraction({})\n",
-                           simulation.current_generation(),
-                           simulation.pref().l(),
-                           total_dead_hosts,
-                           m_fraction),
-                  true);
-    if k && l {
-        simulation.pv("additional_exposure_cond_check",
-                      "additional exposure selected", true);
-        return true;
-    }
-    simulation.pv("additional_exposure_cond_check",
-                  "additional exposure not selected", true);
-    return false;
-}
-
 pub fn birth_hosts(simulation: &mut Simulation) -> bool {
     let file_name = "hosts_birth";
     let result = match simulation.program_version() {
@@ -311,6 +241,12 @@ pub fn birth_hosts(simulation: &mut Simulation) -> bool {
         | ProgramVersions::Seven | ProgramVersions::Eight
         | ProgramVersions::Nine | ProgramVersions::Ten => {
             calculate_qi(simulation);
+            let qq = simulation.ss().qi_host_individual();
+            let avg = qq.into_iter().fold(0., |mut a, (k, v)| {
+                a += v;
+                a
+            }) / qq.len() as f32;
+            info!("average qi: {}", avg);
             birth_generation_version_2(simulation)
         }
     };
@@ -331,6 +267,7 @@ pub fn birth_hosts(simulation: &mut Simulation) -> bool {
         return false;
     }
     let (dist, choices) = result.unwrap();
+    simulation.pv(file_name, &format!("{:#?}\n{:?}\n", dist, choices), true);
     let mut rng = thread_rng();
     simulation.pv(file_name,
                   &format!("{}\n{: >4} {: <width$} {}\n",
@@ -410,6 +347,13 @@ pub fn get_chances_v1(v: f32, u: f32, w: f32, y: f32, t: f32, o: f32, p: f32) ->
     )
 }
 
+pub fn get_chances_v2(host_type: HostTypes, qi: f32, qr: f32, qw: f32, lr: f32, lw: f32, o: f32, y: f32, p: f32) -> f32 {
+    match host_type {
+        HostTypes::Reservation => qi + (qi / qr) * o * y * lr + qi / (qr + qw) * (1. - o) * y * lr + qi / (qr + qw) * (1. - o) * y * lw - p,
+        HostTypes::Wild => qi + qi / (qr + qw) * (1. - o) * y * lr + (qi / qw) * o * y * lw + qi / (qr + qw) * (1. - o) * y * lw
+    }
+}
+
 pub fn birth_generation_version_2(simulation: &mut Simulation) -> Result<(WeightedIndex<f32>, Vec<usize>), usize> {
     let (_, no_of_dead_reservation_host, no_of_dead_wild_host) = simulation.count_dead_hosts();
     let qr = simulation.ss().qr();
@@ -456,139 +400,9 @@ pub fn birth_generation_version_2(simulation: &mut Simulation) -> Result<(Weight
     Ok((WeightedIndex::new(chances).unwrap(), choices))
 }
 
-struct QiParams<'a> {
-    hh: usize,
-    score: usize,
-    simulation: &'a Simulation,
-    host_index: usize,
-}
-
-fn calculate_qi(simulation: &mut Simulation) {
-    let mut qr = 0.;
-    let mut qw = 0.;
-    let match_score_bellow_j = simulation.ss().host_match_scores_bellow_j().clone();
-    let hosts = simulation.hosts().clone();
-
-    let callback = match simulation.program_version() {
-        ProgramVersions::Two | ProgramVersions::Four => calculate_qi_v1,
-        ProgramVersions::Five | ProgramVersions::Six => calculate_qi_v2,
-        ProgramVersions::Seven | ProgramVersions::Eight => calculate_qi_v3,
-        ProgramVersions::Nine | ProgramVersions::Ten => calculate_qi_v4,
-        _ => panic!("Should not come here!")
-    };
-
-    match_score_bellow_j.iter()
-        .filter(|(index, _)| hosts[**index].alive())
-        .for_each(|(index, score)| {
-            let hh = simulation.pref().hh();
-            let qi_params = QiParams {
-                hh,
-                score: *score,
-                simulation,
-                host_index: *index,
-            };
-            let mut qi = callback(qi_params);
-            if qi < 0. { qi = 0. }
-            simulation.set_host_individual_qi(*index, qi);
-            match simulation.host_type(*index) {
-                HostTypes::Reservation => qr += qi,
-                HostTypes::Wild => qw += qi
-            }
-        });
-    simulation.ss_mut().set_qr(qr);
-    simulation.ss_mut().set_qw(qw);
-}
-
-fn calculate_qi_v1(qi_params: QiParams) -> f32 {
-    qi_params.hh as f32 - qi_params.score as f32
-}
-
-// Suppose: An individual's match scores are 4, 6, and 9. And OO=7. HH=12. JJ=0.1. PP=10. And
-// suppose there are C=36=length of set of numbers associated with a host.
-//
-// First way -> NN=(OO=7-4)+(OO=7-6)=4. Then Qi=(HH=12)*(1-JJ=.1*NN=4)=7.2.
-// Second way -> 4 < 7, and 6 < 7, but 9 > 7. NN=2. Then Qi=(HH=12)*(1-JJ=.1*NN=2)=9.6.
-// Third way -> NN=(C=36)-(4+6+9)-(PP=10)=7. Then Qi=(HH=12)*(1-JJ=.1*NN=7)=3.6.
-//
-// And the new death rule=Suppose SS=12 and TT=19
-//
-// if the individual is reservation, (C=36)- (4+6+9)=17 > SS=12. The individual dies.
-// if the individual is wild, (C=36)-(4+6+9)=17 < TT=19. The individual lives.
-
-
-/**
-Same as version 2 except Qi ->Q_subscript_i=Qi for each surviving host individual is the
- variable HH times (1-JJ*NN), where JJ and NN are new variables different from J and N and
- JJ is a given input and NN is the total number of digits that each match score is under OO,
- another new variable.
- **/
-fn calculate_qi_v2(qi_params: QiParams) -> f32 {
-    let match_scores = qi_params.simulation.ss().host_match_scores_all().get(&qi_params.host_index).unwrap();
-    let oo = qi_params.simulation.pref().oo();
-    let jj = qi_params.simulation.pref().jj();
-    let g = qi_params.simulation.pref().g();
-    let mut nn = match_scores.iter()
-        .filter(|v| g - **v > oo)
-        .fold(0., |mut a, v| {
-            a += g as f32 - *v as f32 - oo as f32;
-            a
-        });
-    if nn < 0. { nn = 0. }
-    qi_params.hh as f32 * (1. - (jj as f32 * nn))
-}
-
-// 3) same as version 2 except Qi ->Q_subscript_i=Qi for each surviving host individual is the
-// variable HH times (1-JJ*NN), where JJ is a given input and NN is the total number of match
-// scores under OO.
-fn calculate_qi_v3(qi_params: QiParams) -> f32 {
-    let match_scores = qi_params.simulation.ss().host_match_scores_all().get(&qi_params.host_index).unwrap();
-    let nn = match_scores.iter()
-        .filter(|v| **v < qi_params.simulation.pref().oo())
-        .count();
-    qi_params.hh as f32 * (1. - (qi_params.simulation.pref().jj() as f32 * nn as f32))
-}
-
-// A version with: Qi for each surviving host individual is the variable HH times (1-JJ*NN),
-// where JJ is a given input and NN is the number of unmatched digits above PP (another variable).
-fn calculate_qi_v4(qi_params: QiParams) -> f32 {
-    let match_scores = qi_params.simulation.ss().host_match_scores_all().get(&qi_params.host_index).unwrap();
-    let pp = qi_params.simulation.pref().pp();
-    let jj = qi_params.simulation.pref().jj();
-    let g = qi_params.simulation.pref().g();
-    let mut nn = match_scores.iter()
-        .fold(0., |mut a, v| {
-            a += g as f32 - *v as f32;
-            a
-        }) - pp as f32;
-    if nn < 0. { nn = 0. }
-    qi_params.hh as f32 * (1. - (jj as f32 * nn))
-}
-
-
-/**
-- Qi=Q_subscript_i=Qi for each surviving host individual is the variable HH minus the number
-      of match scores it has that is below a match threshold,
-      J (J is input at the beginning of the program)
-- Qr=Q_subscript_r=The sum of Qi for every reservation individual remaining alive in the
-      population.
-- Qw=Q_subscript_w=The sum of Qi for every wild individual remaining alive in the population.
-- Lr=L_subscript_r=R\*Kr
-- Lw=L_subscript_w=S\*Kw
-- R=reserve_constant
-- S=wild_constant
-- Kr=K_subscript_r=number of reservation individuals killed this generation
-- Kw=K_subscript_w=number of wild individuals killed this generation
- */
-pub fn get_chances_v2(host_type: HostTypes, qi: f32, qr: f32, qw: f32, lr: f32, lw: f32, o: f32, y: f32, p: f32) -> f32 {
-    match host_type {
-        HostTypes::Reservation => qi + (qi / qr) * o * y * lr + qi / (qr + qw) * (1. - o) * y * lr + qi / (qr + qw) * (1. - o) * y * lw - p,
-        HostTypes::Wild => qi + qi / (qr + qw) * (1. - o) * y * lr + (qi / qw) * o * y * lw + qi / (qr + qw) * (1. - o) * y * lw
-    }
-}
 
 fn parasite_truncation_and_birth(simulation: &mut Simulation) {
     let mut _s = String::new();
-
     let match_scores = simulation.ss().match_scores().clone();
     // match score -> total found
     let mut frequency = HashMap::<usize, usize>::new();
@@ -605,13 +419,10 @@ fn parasite_truncation_and_birth(simulation: &mut Simulation) {
     // calculate frequencies and cumulative frequency of each score
     match_scores.iter().for_each(|((species, parasites), match_score)| {
         *frequency.entry(*match_score).or_insert(0) += 1;
-        individuals_with_score.get_mut(&match_score).unwrap().push((species.clone(), parasites.clone()));
         cumulative_frequency[*match_score] += 1;
+        individuals_with_score.get_mut(&match_score).unwrap().push((species.clone(), parasites.clone()));
     });
-
-    //
     let mut rng = thread_rng();
-    //
     _s.push_str(&format!("{:width$} {:10}\n", "killed_individual", "parent_individual", width = 26 + simulation.pref().g()));
     // now calculate the percentile of each match scores
     for i in 1..cumulative_frequency.len() {
@@ -657,29 +468,6 @@ pub fn print_matching_number_sets(n2: Array1<usize>, species: usize) -> String {
     }
     s.push_str(&format!("{}", n2));
     s
-}
-
-pub fn find_match_score(host: &Host, all_parasites: &Array3<usize>, p_idx: &mut ParasiteSpeciesIndex, simulation: &Simulation) -> usize {
-    let mut match_count = 0;
-    let number_set = host.number_set();
-    let start_at = p_idx.species() * simulation.pref().g();
-
-    for ii in start_at..start_at + simulation.pref().g() {
-        match simulation.program_version() {
-            ProgramVersions::One | ProgramVersions::Two | ProgramVersions::Five | ProgramVersions::Seven | ProgramVersions::Nine => {
-                if number_set[ii] == all_parasites[[p_idx.species(), p_idx.parasite_index, ii - start_at]] {
-                    match_count += 1
-                }
-            }
-            ProgramVersions::Three | ProgramVersions::Four | ProgramVersions::Six | ProgramVersions::Eight | ProgramVersions::Ten => {
-                if number_set[ii] != all_parasites[[p_idx.species(), p_idx.parasite_index, ii - start_at]] {
-                    match_count += 1
-                }
-            }
-        }
-    }
-    p_idx.match_count = match_count;
-    match_count
 }
 
 fn parasite_row(all_parasites: &Array3<usize>, species: usize, parasite: usize) -> Array1<usize> {
