@@ -1,6 +1,7 @@
 #![feature(iter_collect_into)]
 #![feature(map_first_last)]
 #![feature(drain_filter)]
+#![feature(hash_drain_filter)]
 #![feature(is_some_with)]
 extern crate core;
 extern crate rand;
@@ -9,7 +10,6 @@ extern crate serde_derive;
 extern crate serde_ini;
 
 use std::{fs, time};
-use std::collections::btree_map::BTreeMap;
 use std::collections::HashMap;
 use std::env::args;
 use std::fmt::{Display, Formatter};
@@ -25,7 +25,7 @@ use log4rs::append::console::ConsoleAppender;
 use log4rs::append::file::FileAppender;
 use log4rs::config::{Appender, Root};
 use log4rs::encode::pattern::PatternEncoder;
-use ndarray::{Array, Array1, Array2, Array3, ArrayBase, Axis, Ix2, Ix3, OwnedRepr};
+use ndarray::{Array, Array1, Array2, Array3, ArrayBase, Axis, OwnedRepr};
 use ndarray_rand::RandomExt;
 use rand::{Rng, thread_rng};
 use rand::distributions::{Uniform, WeightedIndex};
@@ -33,7 +33,6 @@ use rand::prelude::*;
 use rayon::prelude::*;
 
 use crate::exposure::{additional_exposure, expose_all_hosts_to_parasites};
-use crate::host_death_rules::v1::{additional, initial};
 use crate::hosts::{Host, HostTypes, print_hosts};
 use crate::mutations::{mutate_hosts, mutate_parasites};
 use crate::qi_calculations::calculate_qi;
@@ -94,7 +93,7 @@ fn main() {
     // timer
     let now = time::Instant::now();
     // starting up
-    println!("Running version {} with Death Step {}, build 0.1.41_new_kill_algo", program, death_rule);
+    println!("Running version {} with Death Step {}, build 0.1.42_new_kill_algo", program, death_rule);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts: Vec<Vec<usize>> = vec![];
@@ -153,7 +152,7 @@ fn setup_progressbar(gg: usize) -> ProgressBar {
     pb_all_simulation
 }
 
-fn generate_excel(hosts: &ArrayBase<OwnedRepr<usize>, Ix2>, pref: &SimulationPref) -> Vec<String> {
+fn generate_excel(hosts: &ArrayBase<OwnedRepr<usize>, ndarray::Ix2>, pref: &SimulationPref) -> Vec<String> {
     hosts.columns().into_iter().map(|v| {
         let mut r = ReportHostType::new(v.to_owned());
         r.calculate(pref.clone());
@@ -242,7 +241,7 @@ pub fn birth_hosts(simulation: &mut Simulation) -> bool {
         | ProgramVersions::Nine | ProgramVersions::Ten => {
             calculate_qi(simulation);
             let qq = simulation.ss().qi_host_individual();
-            let avg = qq.into_iter().fold(0., |mut a, (k, v)| {
+            let avg = qq.into_iter().fold(0., |mut a, (_, v)| {
                 a += v;
                 a
             }) / qq.len() as f32;

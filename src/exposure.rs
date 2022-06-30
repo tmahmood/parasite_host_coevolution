@@ -5,7 +5,7 @@ use ndarray::{Array3, ArrayBase, Ix3, OwnedRepr};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 
-use crate::{DeathRule, Host, HostTypes, ParasiteSpeciesIndex, ProgramVersions, Simulation};
+use crate::{Host, HostTypes, ParasiteSpeciesIndex, ProgramVersions, Simulation};
 
 pub fn find_match_score(host: &Host, all_parasites: &Array3<usize>, p_idx: &mut ParasiteSpeciesIndex, simulation: &Simulation) -> usize {
     let mut match_count = 0;

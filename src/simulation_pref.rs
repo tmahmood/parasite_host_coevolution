@@ -85,9 +85,15 @@ pub struct SimulationPref {
     #[serde(default = "default_usize")]
     death_rule: usize,
 
+    #[serde(default = "default_f32")]
+    vv: f32,
+
+    #[serde(default = "default_f32")]
+    ww: f32,
 }
 
 impl SimulationPref {
+
     pub(crate) fn ss(&self) -> usize {
         self.ss
     }
@@ -261,7 +267,6 @@ impl SimulationPref {
         self.jj
     }
 
-
     pub fn pp(&self) -> usize {
         self.pp
     }
@@ -274,6 +279,12 @@ impl SimulationPref {
         self.program_version
     }
 
+    pub fn vv(&self) -> f32 {
+        self.vv
+    }
+    pub fn ww(&self) -> f32 {
+        self.ww
+    }
 }
 
 fn default_usize() -> usize {
