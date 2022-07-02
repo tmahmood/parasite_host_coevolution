@@ -148,9 +148,9 @@ pub mod v2 {
     pub fn v3(simulation: &mut Simulation, is_additional: bool, host_indices: Vec<usize>) {
         if host_indices.len() == 0 { return; }
         let (file_name, test) = if is_additional {
-            ("host_dying_additional_exposure", simulation.pref().ww())
+            ("host_dying_additional_exposure", simulation.pref().ww() / 100.)
         } else {
-            ("host_dying_initial_exposure", simulation.pref().vv())
+            ("host_dying_initial_exposure", simulation.pref().vv() / 100.)
         };
         let mut _s = String::new();
         let g = simulation.pref().g();

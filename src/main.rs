@@ -3,7 +3,6 @@
 #![feature(drain_filter)]
 #![feature(hash_drain_filter)]
 #![feature(is_some_with)]
-extern crate core;
 extern crate rand;
 extern crate serde;
 extern crate serde_derive;
@@ -75,7 +74,16 @@ fn main() {
     };
     config_logger(1).unwrap();
     let param_file = args().nth(1).unwrap_or(format!("conf/params.conf"));
-    let pref: SimulationPref = serde_ini::from_str(&fs::read_to_string(param_file).unwrap()).unwrap();
+    let _ss = &fs::read_to_string(param_file).unwrap();
+    let _pref = serde_ini::from_str(_ss);
+    if _pref.is_err() {
+        println!("{:?}", _pref.err());
+        panic!(r#"Invalid input, please check.
+        Floats should be: 0.XX not .XX
+        Comments should not be in the same line with input variables
+        "#);
+    }
+    let pref: SimulationPref = _pref.unwrap();
     //
     let program = if let Some(x) = args().nth(2) {
         ProgramVersions::from(x)
