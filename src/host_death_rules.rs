@@ -147,11 +147,13 @@ pub mod v2 {
      */
     pub fn v3(simulation: &mut Simulation, is_additional: bool, host_indices: Vec<usize>) {
         if host_indices.len() == 0 { return; }
-        let (file_name, test) = if is_additional {
-            ("host_dying_additional_exposure", simulation.pref().ww() / 100.)
+        let file_name = if is_additional {
+            "host_dying_additional_exposure"
         } else {
-            ("host_dying_initial_exposure", simulation.pref().vv() / 100.)
+            "host_dying_initial_exposure"
         };
+        let vv = simulation.pref().vv();
+        let ww = simulation.pref().ww();
         let mut _s = String::new();
         let g = simulation.pref().g();
         let d = simulation.pref().d();
@@ -160,15 +162,30 @@ pub mod v2 {
             .collect();
         let mut frequency = BTreeMap::<usize, usize>::new();
         let mut cumulative_frequency = vec![0; g * d];
-        let mut individuals_with_score = BTreeMap::<usize, Vec<usize>>::new();
+        let mut reservation_individuals_with_score = BTreeMap::<usize, Vec<usize>>::new();
+        let mut wild_individuals_with_score = BTreeMap::<usize, Vec<usize>>::new();
         match_scores.iter().for_each(|(host_index, ind_match_scores)| {
             let match_score = ind_match_scores.iter().map(|v| g - v).sum::<usize>();
             *frequency.entry(match_score).or_insert(0) += 1;
             cumulative_frequency[match_score] += 1;
-            individuals_with_score.entry(match_score).or_insert(vec![]).push(*host_index);
+            if simulation.host_type(*host_index) == HostTypes::Wild {
+                wild_individuals_with_score.entry(match_score).or_insert(vec![]).push(*host_index);
+            } else {
+                reservation_individuals_with_score.entry(match_score).or_insert(vec![]).push(*host_index);
+            }
         });
         let mut freq = 0;
         let last = frequency.last_key_value().unwrap().0.clone();
+        let mut kill_fn = |list: &mut BTreeMap<usize, Vec<usize>>, i| {
+            if !list.contains_key(&i) {
+                return;
+            }
+            // println!("{} {:?}", i, list[&i]);
+            list.get(&i).unwrap().iter().for_each(|host_index| {
+                simulation.kill_host(*host_index);
+                simulation.pv(file_name, &format!("{:3} {}\n", host_index, &simulation.hosts()[*host_index].to_string()), true);
+            });
+        };
         // now calculate the percentile of each match scores
         for i in 0..last + 1 {
             freq += cumulative_frequency.get(i).unwrap_or(&0);
@@ -180,13 +197,18 @@ pub mod v2 {
                 *frequency.get(&i).unwrap(),
                 match_scores.len(),
             );
-            if percentile < test {
+            // no need to check if the percentile < vv or ww
+            if percentile < vv && percentile < ww {
                 continue;
             }
-            individuals_with_score.get(&i).unwrap().iter().for_each(|host_index| {
-                simulation.kill_host(*host_index);
-                simulation.pv(file_name, &format!("{:3} {}\n", host_index, &simulation.hosts()[*host_index].to_string()), true);
-            });
+            // println!("{} {} {}", percentile, ww, vv);
+            if percentile >= vv && !is_additional {
+                kill_fn(&mut wild_individuals_with_score, i)
+            }
+            if percentile >= ww {
+                kill_fn(&mut reservation_individuals_with_score, i)
+            }
+            // println!("---------------");
         }
     }
 }
@@ -230,7 +252,7 @@ mod testing_simulation {
 
     fn print_log(v: &Simulation) {
         for (f, s) in v.log_files().iter() {
-            println!("{:14} -> {}", f, s);
+            println!("{:14} ->\n{}", f, s);
         }
     }
 
@@ -421,68 +443,94 @@ mod testing_simulation {
         assert_eq!(v1_s.is_host_alive(0), false);
     }
 
-    const TV3: &str = "death_rule=2|program_version=1|ww=85|vv=90|a=6|b=6|c=40|d=4|e=12|f=2|g=10|h=3|i=1|j=2|k=0.1|l=-1|m=0.5|o=0.04|p=0.05|q=1|r=6|s=6|n=2|x=1|y=0.71|z=1.96|aa=0.5|bb=50|cc=2|dd=1|ee=0.1|ff=1000|gg=115|hh=12|oo=3|jj=0.01|pp=10|ss=9|tt=12";
+    const TV3: &str = "death_rule=2|program_version=1|ww=75|vv=49|a=7|b=7|c=40|d=4|e=14|f=2|g=10|h=3|i=1|j=2|k=0.1|l=-1|m=0.5|o=0.04|p=0.05|q=1|r=6|s=6|n=2|x=1|y=0.71|z=1.96|aa=0.5|bb=50|cc=2|dd=1|ee=0.1|ff=1000|gg=115|hh=12|oo=3|jj=0.01|pp=10|ss=9|tt=12";
 
-    #[test]
-    fn test_match_score_calculation() {
+    fn setup_death_rule_v3(additional: bool) -> Simulation {
         let s = TV3.replace("|", "\n");
         let mut v1_s = create_test_simulation(&s);
         v1_s.hosts_mut()[0].set_host_type(HostTypes::Reservation);
+        v1_s.hosts_mut()[1].set_host_type(HostTypes::Wild);
+        v1_s.hosts_mut()[2].set_host_type(HostTypes::Wild);
+        v1_s.hosts_mut()[3].set_host_type(HostTypes::Reservation);
+        v1_s.hosts_mut()[4].set_host_type(HostTypes::Reservation);
+        v1_s.hosts_mut()[5].set_host_type(HostTypes::Wild);
+        v1_s.hosts_mut()[6].set_host_type(HostTypes::Wild);
+        v1_s.hosts_mut()[7].set_host_type(HostTypes::Wild);
+        v1_s.hosts_mut()[8].set_host_type(HostTypes::Reservation);
         v1_s.hosts_mut()[9].set_host_type(HostTypes::Reservation);
+        v1_s.hosts_mut()[10].set_host_type(HostTypes::Reservation);
+        v1_s.hosts_mut()[11].set_host_type(HostTypes::Wild);
+        v1_s.hosts_mut()[12].set_host_type(HostTypes::Wild);
+        v1_s.hosts_mut()[13].set_host_type(HostTypes::Reservation);
         let scores = vec![
-            vec![8, 4, 3], // 0
-            vec![2, 3, 2], // 1
-            vec![1, 3, 1], // 2
-            vec![9, 4, 2], // 3
-            vec![2, 9, 2], // 4
-            vec![3, 5, 2], // 5
-            vec![2, 4, 2], // 6
-            vec![2, 2, 4], // 7
-            vec![2, 3, 2], // 8
-            vec![7, 3, 1], // 9
-            vec![3, 1, 3], // 10
-            vec![3, 2, 1], // 11
-            vec![9, 5, 4], // 12
-            vec![3, 8, 4], // 13
-            vec![1, 1, 1], // 14
+            vec![8, 4, 3],    //  0 A R
+            vec![2, 3, 2],    //  1 K W
+            vec![1, 1, 2],    //  2 K W
+            vec![9, 4, 2],    //  3 A R
+            vec![2, 9, 2],    //  4 A R
+            vec![3, 5, 2],    //  5 A W
+            vec![2, 4, 2],    //  6 K W
+            vec![2, 2, 4],    //  7 K W
+            vec![1, 1, 3],    //  8 K R
+            vec![1, 2, 3],    //  9 K R
+            vec![3, 1, 3],    // 10 A R
+            vec![3, 2, 1],    // 11 A W
+            vec![1, 1, 1],    // 12 K W
+            vec![1, 1, 1],    // 13 K R
         ];
         set_host_match_scores(&mut v1_s, &scores);
+        if additional {
+            let scores = vec![
+                vec![4],
+                vec![5],
+            ];
+            let mut i = 0;
+            for host_index in vec![0, 9] {
+                let match_score = scores[i][0];
+                v1_s.update_host_match_score_all(host_index, match_score);
+                v1_s.update_host_match_score(host_index, 1);
+                v1_s.update_host_match_score_bellow_n(host_index, if match_score < v1_s.pref().n() { 1 } else { 0 });
+                v1_s.update_host_match_score_bellow_dd(host_index, if match_score < v1_s.pref().dd() { 1 } else { 0 });
+                v1_s.update_host_match_score_bellow_j(host_index, if match_score < v1_s.pref().j() { 1 } else { 0 });
+                i += 1;
+            }
+            v1_s.ss_mut().add_hosts_tried(0);
+            v1_s.ss_mut().add_hosts_tried(9);
+        }
+        for (host_index, scores) in v1_s.ss().host_match_scores_all() {
+            println!("{:3} {:?}", host_index, scores);
+        }
+        v1_s
+    }
+
+    #[test]
+    fn test_match_score_calculation() {
+        let mut v1_s = setup_death_rule_v3(false);
         crate::host_death_rules::v2::initial(&mut v1_s);
         print_log(&v1_s);
+        assert!(v1_s.is_host_alive(0));
+        assert!(!v1_s.is_host_alive(1));
         assert!(!v1_s.is_host_alive(2));
+        assert!(v1_s.is_host_alive(3));
+        assert!(v1_s.is_host_alive(4));
+        assert!(v1_s.is_host_alive(5));
+        assert!(v1_s.is_host_alive(6));
+        assert!(v1_s.is_host_alive(7));
+        assert!(!v1_s.is_host_alive(8));
+        assert!(v1_s.is_host_alive(9));
+        assert!(v1_s.is_host_alive(10));
+        assert!(!v1_s.is_host_alive(11));
+        assert!(!v1_s.is_host_alive(12));
+        assert!(!v1_s.is_host_alive(13));
     }
 
     #[test]
     fn test_match_score_calculation_additional() {
-        let s = TV3.replace("|", "\n");
-        let mut v1_s = create_test_simulation(&s);
-        v1_s.hosts_mut()[0].set_host_type(HostTypes::Reservation);
-        v1_s.hosts_mut()[9].set_host_type(HostTypes::Reservation);
-        let scores = vec![
-            vec![8, 4, 3, 4], // 0
-            vec![2, 3, 2], // 1
-            vec![1, 3, 1], // 2
-            vec![9, 4, 2], // 3
-            vec![2, 9, 2], // 4
-            vec![3, 5, 2], // 5
-            vec![2, 4, 2], // 6
-            vec![2, 2, 4], // 7
-            vec![2, 3, 2], // 8
-            vec![7, 3, 1, 5], // 9
-            vec![3, 1, 3], // 10
-            vec![3, 2, 1], // 11
-            vec![9, 5, 4], // 12
-            vec![3, 8, 4], // 13
-            vec![1, 1, 1], // 14
-        ];
-        set_host_match_scores(&mut v1_s, &scores);
-        v1_s.ss_mut().add_hosts_tried(0);
-        v1_s.ss_mut().add_hosts_tried(9);
+        let mut v1_s = setup_death_rule_v3(true);
         crate::host_death_rules::v2::additional(&mut v1_s);
         print_log(&v1_s);
         assert!(v1_s.is_host_alive(0));
         assert!(!v1_s.is_host_alive(9));
-        assert!(false)
     }
 }
 
