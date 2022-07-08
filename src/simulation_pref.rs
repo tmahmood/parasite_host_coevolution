@@ -90,9 +90,14 @@ pub struct SimulationPref {
 
     #[serde(default = "default_f32")]
     ww: f32,
+
+    #[serde(default = "default_power_f32")]
+    xx: f32,
 }
 
 impl SimulationPref {
+
+
 
     pub(crate) fn ss(&self) -> usize {
         self.ss
@@ -282,8 +287,13 @@ impl SimulationPref {
     pub fn vv(&self) -> f32 {
         self.vv
     }
+
     pub fn ww(&self) -> f32 {
         self.ww
+    }
+
+    pub fn xx(&self) -> f32 {
+        self.xx
     }
 }
 
@@ -293,4 +303,8 @@ fn default_usize() -> usize {
 
 fn default_f32() -> f32 {
     0.
+}
+
+fn default_power_f32() -> f32 {
+    1.
 }

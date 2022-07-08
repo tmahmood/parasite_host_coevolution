@@ -5,6 +5,7 @@ pub struct QiParams<'a> {
     pub score: usize,
     pub simulation: &'a Simulation,
     pub host_index: usize,
+    pub xx: f32,
 }
 
 pub fn calculate_qi(simulation: &mut Simulation) {
@@ -30,6 +31,7 @@ pub fn calculate_qi(simulation: &mut Simulation) {
                 score: *score,
                 simulation,
                 host_index: *index,
+                xx: simulation.pref().xx(),
             };
             let mut qi = callback(qi_params);
             if qi < 0. { qi = 0. }
@@ -71,14 +73,16 @@ pub fn calculate_qi_v2(qi_params: QiParams) -> f32 {
     let oo = qi_params.simulation.pref().oo();
     let jj = qi_params.simulation.pref().jj();
     let g = qi_params.simulation.pref().g();
-    let mut nn = match_scores.iter()
+    let mut nn: f32 = match_scores.iter()
         .filter(|v| g - **v > oo)
         .fold(0., |mut a, v| {
             a += g as f32 - *v as f32 - oo as f32;
             a
         });
     if nn < 0. { nn = 0. }
-    qi_params.hh as f32 * (1. - (jj as f32 * nn))
+    nn = nn.powf(qi_params.xx);
+    let jj_nn = (1. - (jj as f32 * nn));
+    qi_params.hh as f32 * jj_nn
 }
 
 // 3) same as version 2 except Qi ->Q_subscript_i=Qi for each surviving host individual is the
@@ -86,9 +90,9 @@ pub fn calculate_qi_v2(qi_params: QiParams) -> f32 {
 // scores under OO.
 pub fn calculate_qi_v3(qi_params: QiParams) -> f32 {
     let match_scores = qi_params.simulation.ss().host_match_scores_all().get(&qi_params.host_index).unwrap();
-    let nn = match_scores.iter()
+    let nn = (match_scores.iter()
         .filter(|v| **v < qi_params.simulation.pref().oo())
-        .count();
+        .count() as f32).powf(qi_params.xx);
     qi_params.hh as f32 * (1. - (qi_params.simulation.pref().jj() as f32 * nn as f32))
 }
 
@@ -105,5 +109,6 @@ pub fn calculate_qi_v4(qi_params: QiParams) -> f32 {
             a
         }) - pp as f32;
     if nn < 0. { nn = 0. }
+    nn = nn.powf(qi_params.xx);
     qi_params.hh as f32 * (1. - (jj as f32 * nn))
 }

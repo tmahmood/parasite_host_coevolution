@@ -46,6 +46,9 @@ pub mod exposure;
 pub mod qi_calculations;
 pub mod host_death_rules;
 
+#[cfg(test)]
+mod testing_simulation;
+
 #[derive(Debug, Clone)]
 pub struct ParasiteSpeciesIndex {
     species_index: usize,
@@ -101,7 +104,7 @@ fn main() {
     // timer
     let now = time::Instant::now();
     // starting up
-    println!("Running version {} with Death Step {}, build 0.1.42_new_kill_algo", program, death_rule);
+    println!("Running version {} with Death Step {}, build 0.1.44_qi_zero_investigation", program, death_rule);
     let program_clone = program.clone();
     let pref_clone = pref.clone();
     let mut wild_hosts: Vec<Vec<usize>> = vec![];
